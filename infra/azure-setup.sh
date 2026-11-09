@@ -59,31 +59,61 @@ echo "Location     : $LOCATION"
 echo
 
 # ------------------------------------------------------- 1. resource group ---
-echo "[1/4] Creating resource group $RESOURCE_GROUP"
+echo "[1/5] Creating resource group $RESOURCE_GROUP"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
 
-# --------------------------------------------------------------- 2. ACR ------
-echo "[2/4] Creating container registry $ACR_NAME (Basic)"
-if ! az acr create \
+# --------------------------------------------------- 2. resource providers ---
+# A new or newly renewed subscription often has these namespaces unregistered,
+# and resource creation then fails with "MissingSubscriptionRegistration" -
+# which looks nothing like the real cause. Registering is idempotent and only
+# costs time the first time.
+echo "[2/5] Registering the required resource providers"
+for ns in Microsoft.ContainerRegistry Microsoft.ContainerService \
+          Microsoft.Compute Microsoft.Network Microsoft.Storage \
+          Microsoft.OperationalInsights Microsoft.Insights; do
+    STATE=$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || echo Unknown)
+    if [ "$STATE" = "Registered" ]; then
+        echo "      $ns already registered"
+    else
+        echo "      $ns ($STATE) - registering, this can take a few minutes"
+        az provider register --namespace "$ns" --wait --output none
+        echo "      $ns registered"
+    fi
+done
+
+# --------------------------------------------------------------- 3. ACR ------
+echo "[3/5] Creating container registry $ACR_NAME (Basic)"
+if ! ACR_ERROR=$(az acr create \
         --resource-group "$RESOURCE_GROUP" \
         --name "$ACR_NAME" \
         --sku Basic \
-        --output none 2>/dev/null; then
+        --output none 2>&1); then
     echo
-    echo "ERROR: could not create the registry '$ACR_NAME'."
-    echo "Registry names are globally unique across all of Azure, so this one is"
-    echo "probably taken. Rerun with a different name, for example:"
+    echo "ERROR: could not create the registry '$ACR_NAME'. Azure said:"
+    printf '%s\n' "$ACR_ERROR" | sed 's/^/    /'
     echo
-    echo "    ACR_NAME=${ACR_NAME}ss bash infra/azure-setup.sh"
-    echo
-    echo "and set the same value for ACR_NAME and ACR_LOGIN_SERVER in Jenkinsfile"
-    echo "and for acr_login_server in ansible/deploy-app.yml."
+    case "$ACR_ERROR" in
+        *AlreadyInUse*|*AlreadyExists*|*already*use*)
+            echo "Registry names are globally unique across all of Azure, so this one"
+            echo "is taken. Rerun with a different name, for example:"
+            echo
+            echo "    ACR_NAME=${ACR_NAME}ss bash infra/azure-setup.sh"
+            echo
+            echo "and set the same value for ACR_NAME and ACR_LOGIN_SERVER in"
+            echo "Jenkinsfile, and for acr_login_server in ansible/deploy-app.yml."
+            ;;
+        *MissingSubscriptionRegistration*)
+            echo "A resource provider is not registered on this subscription."
+            echo "Step 2 of this script does that; if it was skipped, run:"
+            echo "    az provider register --namespace Microsoft.ContainerRegistry --wait"
+            ;;
+    esac
     exit 1
 fi
 ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
 
-# --------------------------------------------------------------- 3. AKS ------
-echo "[3/4] Creating AKS cluster $AKS_CLUSTER ($AKS_NODE_COUNT x $AKS_NODE_SIZE, ${AKS_DISK_SIZE}GB disk)"
+# --------------------------------------------------------------- 4. AKS ------
+echo "[4/5] Creating AKS cluster $AKS_CLUSTER ($AKS_NODE_COUNT x $AKS_NODE_SIZE, ${AKS_DISK_SIZE}GB disk)"
 echo "      This takes 5-10 minutes."
 az aks create \
     --resource-group "$RESOURCE_GROUP" \
@@ -98,8 +128,8 @@ az aks create \
     --output none
 echo "      Cluster created and granted AcrPull on $ACR_NAME"
 
-# ------------------------------------------------------ 4. service principal -
-echo "[4/4] Creating service principal $SP_NAME for Jenkins"
+# ------------------------------------------------------ 5. service principal -
+echo "[5/5] Creating service principal $SP_NAME for Jenkins"
 SP_JSON=$(az ad sp create-for-rbac \
     --name "$SP_NAME" \
     --role Contributor \

@@ -1,0 +1,8 @@
+# Dedicated namespace so the demo workload is isolated from kube-system.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cicd-demo
+  labels:
+    name: cicd-demo
+    app.kubernetes.io/part-of: cicd-demo-app

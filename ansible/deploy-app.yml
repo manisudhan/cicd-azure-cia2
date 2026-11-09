@@ -1,0 +1,101 @@
+---
+# ===========================================================================
+# Deployment automation: render the Kubernetes manifests for one specific
+# build and roll them out to Azure Kubernetes Service.
+#
+# Called by stage 7 of the Jenkinsfile:
+#
+#     ansible-playbook ansible/deploy-app.yml -i ansible/inventory.ini \
+#         -e "image=acrcicdcia2.azurecr.io/cicd-demo-app:12-a1b2c3d" \
+#         -e "image_tag=12-a1b2c3d" -e "build_number=12" -e "commit_sha=a1b2c3d"
+#
+# It runs against localhost because it reaches the cluster through kubectl
+# using the kubeconfig that "az aks get-credentials" just wrote.
+# ===========================================================================
+- name: Deploy cicd-demo-app to Azure Kubernetes Service
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  vars:
+    # All of these can be overridden with -e on the command line.
+    acr_login_server: "acrcicdcia2.azurecr.io"
+    image_name: "cicd-demo-app"
+    image_tag: "latest"
+    image: "{{ acr_login_server }}/{{ image_name }}:{{ image_tag }}"
+    build_number: "manual"
+    commit_sha: "manual"
+    release_message: "Deployed to Azure Kubernetes Service by Jenkins"
+    k8s_namespace: "cicd-demo"
+    app_name: "cicd-demo-app"
+    project_root: "{{ playbook_dir }}/.."
+    rendered_dir: "{{ project_root }}/k8s/rendered"
+
+  tasks:
+
+    - name: Verify kubectl can reach the cluster
+      ansible.builtin.command: kubectl cluster-info
+      changed_when: false
+      register: cluster_info
+
+    - name: Show which cluster is being targeted
+      ansible.builtin.debug:
+        msg: "{{ cluster_info.stdout_lines | select('search', 'running at') | list }}"
+
+    - name: Render the Kubernetes manifests for this build
+      ansible.builtin.command:
+        cmd: ./render.sh
+        chdir: "{{ project_root }}/k8s"
+      environment:
+        ACR_LOGIN_SERVER: "{{ acr_login_server }}"
+        IMAGE_NAME: "{{ image_name }}"
+        IMAGE_TAG: "{{ image_tag }}"
+        IMAGE: "{{ image }}"
+        BUILD_NUMBER: "{{ build_number }}"
+        COMMIT_SHA: "{{ commit_sha }}"
+        RELEASE_MESSAGE: "{{ release_message }}"
+      changed_when: true
+      register: render_result
+
+    - name: Show the rendered image reference
+      ansible.builtin.debug:
+        var: render_result.stdout_lines
+
+    - name: Apply the manifests to the cluster
+      ansible.builtin.command:
+        cmd: kubectl apply -f "{{ rendered_dir }}"
+      register: apply_result
+      changed_when: "'configured' in apply_result.stdout or 'created' in apply_result.stdout"
+
+    - name: Show what the cluster accepted
+      ansible.builtin.debug:
+        var: apply_result.stdout_lines
+
+    - name: Wait for the rolling update to finish
+      ansible.builtin.command:
+        cmd: >-
+          kubectl -n {{ k8s_namespace }} rollout status
+          deployment/{{ app_name }} --timeout=300s
+      changed_when: false
+      register: rollout
+
+    - name: Show the rollout result
+      ansible.builtin.debug:
+        var: rollout.stdout_lines
+
+    - name: Read the LoadBalancer public IP
+      ansible.builtin.command:
+        cmd: >-
+          kubectl -n {{ k8s_namespace }} get svc {{ app_name }}
+          -o jsonpath={.status.loadBalancer.ingress[0].ip}
+      changed_when: false
+      register: public_ip
+      retries: 30
+      delay: 10
+      until: public_ip.stdout | length > 0
+
+    - name: Report the live application endpoint
+      ansible.builtin.debug:
+        msg: >-
+          Build {{ build_number }} (commit {{ commit_sha }}) is live at
+          http://{{ public_ip.stdout }} - image {{ image }}

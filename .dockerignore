@@ -1,0 +1,26 @@
+# Keep the build context small and never ship local state or secrets into an image.
+target/
+**/target/
+.git/
+.gitignore
+.github/
+.idea/
+*.iml
+.vscode/
+.mvn/wrapper/maven-wrapper.jar
+k8s/
+ansible/
+infra/
+docs/
+*.md
+!README.md
+Jenkinsfile
+.gitleaks.toml
+gitleaks-report.*
+.env
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+kubeconfig*

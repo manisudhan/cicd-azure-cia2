@@ -1,0 +1,24 @@
+# ---------------------------------------------------------------------------
+# TEMPLATE - render before applying.
+#   ${...} placeholders are substituted by the Jenkins pipeline (envsubst),
+#   by ./render.sh for a manual deploy, or by ansible/deploy-app.yml.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cicd-demo-app-config
+  namespace: cicd-demo
+  labels:
+    app.kubernetes.io/name: cicd-demo-app
+    app.kubernetes.io/component: config
+data:
+  # Non-secret runtime settings. Real credentials would live in a Kubernetes
+  # Secret backed by Azure Key Vault, never in a ConfigMap.
+  APP_ENVIRONMENT: "production"
+  APP_RELEASE_MESSAGE: "${RELEASE_MESSAGE}"
+  # Build provenance, injected by the pipeline so the running pod can prove
+  # which commit and which Jenkins build produced it.
+  APP_IMAGE_TAG: "${IMAGE_TAG}"
+  APP_BUILD_NUMBER: "${BUILD_NUMBER}"
+  APP_COMMIT_SHA: "${COMMIT_SHA}"
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"

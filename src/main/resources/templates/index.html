@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CI/CD Demo &middot; Azure Kubernetes Service</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body>
+<main class="card">
+    <p class="eyebrow" th:text="${greeting}">Hello</p>
+    <h1>Java CI/CD Pipeline Demo</h1>
+    <p class="release" th:text="${releaseMessage}">Release message</p>
+
+    <dl class="meta">
+        <div>
+            <dt>Application version</dt>
+            <dd th:text="${buildInfo.applicationVersion}">1.0.0</dd>
+        </div>
+        <div>
+            <dt>Image tag</dt>
+            <dd th:text="${buildInfo.imageTag}">local</dd>
+        </div>
+        <div>
+            <dt>Jenkins build</dt>
+            <dd th:text="${buildInfo.buildNumber}">local</dd>
+        </div>
+        <div>
+            <dt>Git commit</dt>
+            <dd th:text="${buildInfo.commitSha}">local</dd>
+        </div>
+        <div>
+            <dt>Environment</dt>
+            <dd th:text="${buildInfo.environment}">local</dd>
+        </div>
+        <div>
+            <dt>Served by pod</dt>
+            <dd th:text="${buildInfo.servedBy}">localhost</dd>
+        </div>
+    </dl>
+
+    <p class="links">
+        <a th:href="@{/api/v1/greeting(name='DevOps')}">/api/v1/greeting</a>
+        <a th:href="@{/api/v1/info}">/api/v1/info</a>
+        <a th:href="@{/actuator/health}">/actuator/health</a>
+    </p>
+
+    <footer>
+        GitHub &rarr; Jenkins &rarr; Gitleaks &rarr; Maven &rarr; SonarQube Cloud &rarr; Docker &rarr;
+        Azure Container Registry &rarr; Azure Kubernetes Service
+    </footer>
+</main>
+</body>
+</html>

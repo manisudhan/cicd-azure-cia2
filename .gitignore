@@ -1,0 +1,48 @@
+# ---- Maven / Java ----
+target/
+!.mvn/wrapper/maven-wrapper.properties
+*.class
+*.jar
+!.mvn/wrapper/*.jar
+*.war
+hs_err_pid*.log
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+nbproject/private/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Pipeline / scan output ----
+gitleaks-report.json
+gitleaks-report.sarif
+.scannerwork/
+.sonar/
+
+# ---- Secrets: never commit these (Gitleaks also blocks them) ----
+.env
+*.env
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.pub
+id_rsa*
+kubeconfig
+kubeconfig-*
+azure-credentials.json
+sp-credentials.json
+secrets.yaml
+secrets.yml
+ansible/vault-password*

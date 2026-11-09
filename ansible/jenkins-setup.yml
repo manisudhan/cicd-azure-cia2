@@ -1,0 +1,178 @@
+---
+# ===========================================================================
+# Configuration management: turn a bare Ubuntu VM into the CI/CD build server.
+#
+# Run once, from WSL / Linux / macOS, after infra/azure-setup.sh has created
+# the VM and you have put its public IP into inventory.ini:
+#
+#     cd ansible
+#     ansible-playbook -i inventory.ini jenkins-setup.yml
+#
+# The playbook is idempotent, so it is safe to re-run after a change.
+# ===========================================================================
+- name: Provision the Jenkins CI/CD server on Azure
+  hosts: jenkins
+  become: true
+
+  vars:
+    jenkins_port: 8080
+    java_package: openjdk-21-jdk
+    gitleaks_version: "8.30.1"
+
+  tasks:
+
+    # ---------------------------------------------------------------- base OS
+    - name: Update the apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install base packages required by the pipeline
+      ansible.builtin.apt:
+        name:
+          - "{{ java_package }}"      # Jenkins controller + Maven builds
+          - git                       # source-code management
+          - curl
+          - wget
+          - unzip
+          - gnupg
+          - ca-certificates
+          - gettext-base              # provides envsubst for manifest rendering
+          - python3-pip
+          - jq
+        state: present
+
+    # ------------------------------------------------------------------ Docker
+    - name: Add the Docker apt signing key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+        state: present
+
+    - name: Add the Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/docker.gpg]
+          https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install the Docker engine and CLI
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is running and enabled at boot
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    # ----------------------------------------------------------------- Jenkins
+    - name: Add the Jenkins apt signing key
+      ansible.builtin.apt_key:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+        keyring: /etc/apt/keyrings/jenkins.gpg
+        state: present
+
+    - name: Add the Jenkins apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/jenkins.gpg]
+          https://pkg.jenkins.io/debian-stable binary/
+        filename: jenkins
+        state: present
+
+    - name: Install Jenkins
+      ansible.builtin.apt:
+        name: jenkins
+        state: present
+        update_cache: true
+
+    - name: Allow the jenkins user to build container images
+      ansible.builtin.user:
+        name: jenkins
+        groups: docker
+        append: true
+      notify: Restart Jenkins
+
+    # ------------------------------------------------- Kubernetes and Azure CLI
+    - name: Install kubectl
+      ansible.builtin.get_url:
+        url: https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: "0755"
+
+    - name: Install the Azure CLI
+      ansible.builtin.shell:
+        cmd: curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+        creates: /usr/bin/az
+
+    # ------------------------------------------------- security scanning tools
+    - name: Install Gitleaks for secret detection
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/gitleaks/gitleaks/releases/download/v{{ gitleaks_version }}/gitleaks_{{ gitleaks_version }}_linux_x64.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include:
+          - gitleaks
+        mode: "0755"
+        creates: /usr/local/bin/gitleaks
+
+    # ----------------------------------- Ansible itself, for the deploy stage
+    - name: Install Ansible on the build server
+      ansible.builtin.apt:
+        name: ansible
+        state: present
+
+    # ------------------------------------------------------------------ Jenkins
+    - name: Ensure Jenkins is running and enabled at boot
+      ansible.builtin.service:
+        name: jenkins
+        state: started
+        enabled: true
+
+    - name: Wait for Jenkins to accept connections
+      ansible.builtin.wait_for:
+        port: "{{ jenkins_port }}"
+        delay: 5
+        timeout: 300
+
+    - name: Read the Jenkins initial admin password
+      ansible.builtin.slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_admin_password
+      failed_when: false
+
+    - name: Report the installed tool versions
+      ansible.builtin.shell: |
+        set -e
+        echo "java     : $(java -version 2>&1 | head -1)"
+        echo "docker   : $(docker --version)"
+        echo "kubectl  : $(kubectl version --client --output=yaml | grep gitVersion | head -1)"
+        echo "az       : $(az version --output tsv --query '\"azure-cli\"')"
+        echo "gitleaks : $(gitleaks version)"
+        echo "ansible  : $(ansible --version | head -1)"
+      changed_when: false
+      register: tool_versions
+
+    - name: Show the provisioning summary
+      ansible.builtin.debug:
+        msg: >-
+          Jenkins is available at http://{{ ansible_host }}:{{ jenkins_port }} -
+          unlock it with {{ (jenkins_admin_password.content | b64decode | trim)
+          if jenkins_admin_password.content is defined
+          else 'the password in /var/lib/jenkins/secrets/initialAdminPassword' }}.
+          Installed: {{ tool_versions.stdout_lines }}
+
+  handlers:
+    - name: Restart Jenkins
+      ansible.builtin.service:
+        name: jenkins
+        state: restarted

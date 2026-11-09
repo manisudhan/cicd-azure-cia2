@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------------
+# TEMPLATE - render before applying (see 01-configmap.yaml header).
+# ${IMAGE} becomes <acr-name>.azurecr.io/cicd-demo-app:<build>-<commit>
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicd-demo-app
+  namespace: cicd-demo
+  labels:
+    app.kubernetes.io/name: cicd-demo-app
+    app.kubernetes.io/version: "${IMAGE_TAG}"
+    app.kubernetes.io/managed-by: jenkins
+  annotations:
+    # Shown by "kubectl rollout history" so each revision is traceable to a commit.
+    kubernetes.io/change-cause: "Jenkins build ${BUILD_NUMBER} from commit ${COMMIT_SHA}"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cicd-demo-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero-downtime redeployment: a new pod must be Ready before an old one goes.
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cicd-demo-app
+        app.kubernetes.io/version: "${IMAGE_TAG}"
+      annotations:
+        # Forces a new pod template hash even if the image tag were reused.
+        cicd.demo/build-number: "${BUILD_NUMBER}"
+        cicd.demo/commit-sha: "${COMMIT_SHA}"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "${IMAGE}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: cicd-demo-app-config
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "320Mi"
+            limits:
+              cpu: "500m"
+              memory: "640Mi"
+          # Spring Boot Actuator probes: startup gives the JVM time to warm up,
+          # readiness gates traffic, liveness restarts a wedged container.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The root filesystem is read-only, so Tomcat needs a writable temp dir.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30

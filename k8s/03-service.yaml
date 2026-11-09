@@ -1,0 +1,18 @@
+# Azure provisions a Standard Load Balancer with a public IP for this Service.
+# That public IP is the endpoint opened in a browser as deployment evidence.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cicd-demo-app
+  namespace: cicd-demo
+  labels:
+    app.kubernetes.io/name: cicd-demo-app
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: cicd-demo-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

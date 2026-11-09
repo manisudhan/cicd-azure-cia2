@@ -1,0 +1,88 @@
+# Gitleaks configuration - https://github.com/gitleaks/gitleaks
+#
+# Gitleaks runs as the first stage of the Jenkins pipeline (a "shift-left"
+# secret-detection gate). It scans the full Git history, not just the working
+# tree, so a credential that was committed and later deleted is still caught.
+# A non-zero exit code fails the build before any image is published.
+
+title = "CIA-2 Azure CI/CD pipeline - secret scanning rules"
+
+[extend]
+# Inherit the ~170 upstream rules (AWS keys, GitHub/GitLab PATs, private keys,
+# Slack tokens, JWTs, ...) and add the Azure and pipeline specific rules below.
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Custom rules for the credentials this project actually handles
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "azure-storage-connection-string"
+description = "Azure Storage account connection string containing an AccountKey"
+regex = '''DefaultEndpointsProtocol=https?;AccountName=[A-Za-z0-9]+;AccountKey=[A-Za-z0-9+/=]{64,}'''
+keywords = ["defaultendpointsprotocol", "accountkey"]
+tags = ["azure", "storage", "secret"]
+
+[[rules]]
+id = "azure-service-principal-secret"
+description = "Azure service principal client secret in a credentials file"
+regex = '''(?i)(client[_-]?secret|appsecret|sp[_-]?password)["'\s:=]{1,10}["']?([A-Za-z0-9~._\-]{32,50})["']?'''
+secretGroup = 2
+keywords = ["clientsecret", "client_secret", "client-secret", "appsecret", "sp_password"]
+tags = ["azure", "service-principal", "secret"]
+
+[[rules]]
+id = "kubeconfig-embedded-client-key"
+description = "Base64 client key or certificate embedded in a kubeconfig file"
+regex = '''(client-key-data|client-certificate-data|token)\s*:\s*[A-Za-z0-9+/]{100,}={0,2}'''
+keywords = ["client-key-data", "client-certificate-data"]
+tags = ["kubernetes", "kubeconfig", "secret"]
+
+[[rules]]
+id = "acr-admin-password"
+description = "Azure Container Registry admin password"
+regex = '''(?i)(acr|registry)[_-]?(admin[_-]?)?password["'\s:=]{1,10}["']?([A-Za-z0-9+/=]{30,})["']?'''
+secretGroup = 3
+keywords = ["acr_password", "acr-password", "registry_password", "registrypassword"]
+tags = ["azure", "acr", "secret"]
+
+[[rules]]
+id = "sonar-token"
+description = "SonarQube / SonarQube Cloud user, project or analysis token"
+regex = '''\b(sq[apu]_[a-f0-9]{40}|squ_[a-f0-9]{40})\b'''
+keywords = ["sqp_", "sqa_", "squ_"]
+tags = ["sonarqube", "token", "secret"]
+
+[[rules]]
+id = "jenkins-api-token"
+description = "Jenkins API token assigned to a user"
+regex = '''(?i)jenkins[_-]?(api[_-]?)?token["'\s:=]{1,10}["']?([a-f0-9]{32,34})["']?'''
+secretGroup = 2
+keywords = ["jenkins_token", "jenkins-token", "jenkinsapitoken"]
+tags = ["jenkins", "token", "secret"]
+
+# ---------------------------------------------------------------------------
+# Allowlist - documented, reviewed exceptions only.
+# Every entry below is a placeholder or a test fixture, never a live credential.
+# ---------------------------------------------------------------------------
+
+[allowlist]
+description = "Documented false positives: scanner config, build output and placeholders"
+
+paths = [
+    # This file necessarily contains the detection patterns themselves.
+    '''^\.gitleaks\.toml$''',
+    # Maven wrapper scripts and build output are not source we control.
+    '''^mvnw(\.cmd)?$''',
+    '''^\.mvn/wrapper/''',
+    '''(^|/)target/''',
+    # Screenshots submitted as evidence.
+    '''^docs/screenshots/''',
+]
+
+regexes = [
+    # Obvious placeholders used in documentation and sample configuration.
+    '''(?i)(CHANGE[-_]ME|REPLACE[-_]ME|YOUR[-_](AZURE|ACR|SONAR|GITHUB)|<[a-z0-9_\-]+>|xxxxxxxx|example\.com|EXAMPLE_ONLY)''',
+    # Fixed, non-secret commit SHA used by the unit tests.
+    '''0123456789abcdef''',
+]

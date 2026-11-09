@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: cicd-demo-app
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8080
+  shutdown: graceful
+  error:
+    include-message: always
+
+# Values are replaced at build time by Maven resource filtering, and can be
+# overridden at runtime by the environment variables injected from the
+# Kubernetes ConfigMap (APP_RELEASE_MESSAGE, APP_IMAGE_TAG, ...).
+app:
+  version: '@project.version@'
+  release-message: ${APP_RELEASE_MESSAGE:Deployed to Azure Kubernetes Service by Jenkins}
+  image-tag: ${APP_IMAGE_TAG:local}
+  build-number: ${APP_BUILD_NUMBER:local}
+  commit-sha: ${APP_COMMIT_SHA:local}
+  environment: ${APP_ENVIRONMENT:local}
+
+# Actuator supplies the endpoints used by the Kubernetes liveness and readiness probes.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.example.cicd: INFO

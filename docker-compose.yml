@@ -42,6 +42,11 @@ services:
       TZ: Asia/Kolkata
       # Give the JVM a sensible cap so Maven builds do not starve the host.
       JAVA_OPTS: -Xmx1024m -Djava.awt.headless=true
+      # Pinned explicitly because the container runs as root, so $HOME is /root
+      # rather than /var/jenkins_home. Keeping both inside the persistent volume
+      # means the kubeconfig and the Azure login survive a restart.
+      KUBECONFIG: /var/jenkins_home/.kube/config
+      AZURE_CONFIG_DIR: /var/jenkins_home/.azure
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/login"]

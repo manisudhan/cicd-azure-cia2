@@ -103,29 +103,54 @@ flowchart LR
 │   ├── azure-setup.sh            Creates RG, ACR, AKS, service principal
 │   ├── azure-pause.sh            Stops the cluster (~$0.35/day)
 │   ├── azure-resume.sh           Starts it again
-│   └── azure-teardown.sh         Deletes everything
+│   ├── azure-teardown.sh         Deletes everything
+│   └── local-connect.sh          Points Jenkins at Docker Desktop Kubernetes
 │
 └── docs/
-    ├── SETUP.md                  Step-by-step runbook
+    ├── SETUP.md                  Azure runbook
+    ├── LOCAL.md                  Local-Kubernetes runbook (no Azure needed)
     ├── REPORT.md                 Technical report
     └── screenshots/              Evidence for submission
 ```
 
 ---
 
+## Two deployment targets
+
+The pipeline takes a `DEPLOY_TARGET` parameter, so the same `Jenkinsfile` runs
+against either cluster:
+
+| | `local` | `azure` |
+|---|---|---|
+| Cluster | Docker Desktop Kubernetes | Azure Kubernetes Service |
+| Registry | none — shares the Docker image store | Azure Container Registry |
+| Azure account | not needed | required |
+| Cost | $0 | ~$2.05/day |
+| Runbook | **[docs/LOCAL.md](docs/LOCAL.md)** | **[docs/SETUP.md](docs/SETUP.md)** |
+
+Stages 1–5 are identical on both; only publishing and deployment differ. That
+makes it practical to prove the whole pipeline locally first and switch to Azure
+with one parameter change.
+
 ## Quick start
 
-Full instructions are in **[docs/SETUP.md](docs/SETUP.md)**. In short:
-
-```bash
-bash infra/azure-setup.sh
-```
+**Local (no Azure needed)** — full steps in [docs/LOCAL.md](docs/LOCAL.md):
 
 ```bash
 docker compose up -d --build
 ```
 
-Then open <http://localhost:8080>, add the four credentials, point a Pipeline
+```bash
+bash infra/local-connect.sh
+```
+
+**Azure** — full steps in [docs/SETUP.md](docs/SETUP.md):
+
+```bash
+bash infra/azure-setup.sh
+```
+
+Either way, open <http://localhost:8080>, add the credentials, point a Pipeline
 job at this repository, and push a commit.
 
 ### Run the application locally

@@ -83,19 +83,28 @@
       ansible.builtin.debug:
         var: rollout.stdout_lines
 
-    - name: Read the LoadBalancer public IP
-      ansible.builtin.command:
-        cmd: >-
-          kubectl -n {{ k8s_namespace }} get svc {{ app_name }}
-          -o jsonpath={.status.loadBalancer.ingress[0].ip}
+    # AKS assigns an IP to the LoadBalancer; Docker Desktop reports the hostname
+    # "localhost" instead. One task reads whichever is set, so neither target
+    # waits out the retries unnecessarily.
+    - name: Wait for the LoadBalancer endpoint
+      ansible.builtin.shell:
+        cmd: |
+          endpoint=$(kubectl -n {{ k8s_namespace }} get svc {{ app_name }} \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          if [ -z "$endpoint" ]; then
+              endpoint=$(kubectl -n {{ k8s_namespace }} get svc {{ app_name }} \
+                  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          fi
+          printf "%s" "$endpoint"
+        executable: /bin/bash
       changed_when: false
-      register: public_ip
+      register: lb_endpoint
       retries: 30
       delay: 10
-      until: public_ip.stdout | length > 0
+      until: lb_endpoint.stdout | trim | length > 0
 
     - name: Report the live application endpoint
       ansible.builtin.debug:
         msg: >-
           Build {{ build_number }} (commit {{ commit_sha }}) is live at
-          http://{{ public_ip.stdout }} - image {{ image }}
+          http://{{ lb_endpoint.stdout | trim }} - image {{ image }}

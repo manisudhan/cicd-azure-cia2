@@ -94,13 +94,16 @@ cat <<'DONE'
 ===========================================================================
  Run the pipeline with DEPLOY_TARGET = local (the default).
 
- Stage 6 (push to ACR) is skipped: Docker Desktop's Kubernetes shares the
+ Stage 6 (push to ACR) is skipped: Docker Desktop's Kubernetes reads the
  Docker image store, so the image built in stage 5 is already visible to the
  cluster and the Deployment's imagePullPolicy: IfNotPresent uses it directly.
 
- After a successful build the application is at:
-     http://localhost
- (the Service is type LoadBalancer, which Docker Desktop publishes on
- localhost port 80)
+ Docker Desktop has no working LoadBalancer controller, so the Service keeps
+ EXTERNAL-IP <pending>. That is expected: stage 8 smoke-tests the Service from
+ inside the cluster instead. To open the app in a browser, run:
+
+     kubectl port-forward -n cicd-demo svc/cicd-demo-app 8081:80
+
+ then browse http://localhost:8081   (8080 is taken by Jenkins)
 ===========================================================================
 DONE

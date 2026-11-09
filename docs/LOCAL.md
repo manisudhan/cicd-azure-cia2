@@ -13,15 +13,39 @@ without paying for cluster time.
 | Stages 1–5 | identical | identical |
 | Stage 6 (push to registry) | skipped — see below | pushes to ACR |
 | Stage 7 (deploy) | Docker Desktop Kubernetes | AKS |
-| Stage 8 (verify) | smoke-tests `http://localhost` | smoke-tests the LoadBalancer IP |
+| Stage 8 (verify) | smoke-tests the Service from inside the cluster | smoke-tests the public LoadBalancer IP |
+| Browser access | `kubectl port-forward` — see step 6 | the LoadBalancer's public IP |
 | Azure account | not needed | required |
 | Cost | $0 | ~$2.05/day |
 
-**Why stage 6 is skipped.** Docker Desktop's Kubernetes shares the Docker image
-store with the daemon that builds the image, so the image produced in stage 5 is
+**Why stage 6 is skipped.** Docker Desktop's Kubernetes can read the Docker image
+store of the daemon that builds the image, so the image produced in stage 5 is
 already visible to the cluster. The Deployment already specifies
 `imagePullPolicy: IfNotPresent`, so Kubernetes uses the local image instead of
 trying to pull it. A local registry would add a moving part for no benefit.
+
+This was verified rather than assumed: an image tagged `local-probe:v1` — a tag
+that exists nowhere on Docker Hub — was built locally and scheduled into the
+cluster. Kubernetes reported `Successfully pulled image "local-probe:v1" in
+944ms` and the pod reached `Running`, which it could only do from the local
+store.
+
+**Why there is no browser endpoint on `http://localhost`.** The same probe showed
+that a `type: LoadBalancer` Service stays `EXTERNAL-IP <pending>` on this
+cluster: Docker Desktop's Kubernetes is kind-based, and its
+`cloud-provider-kind` controller fails to start the envoy container it uses as
+the load balancer (`exit status 125`, with the envoy image already present).
+
+The manifest deliberately keeps `type: LoadBalancer`, because that is what AKS
+needs and it is part of the assignment's design. The local target works around
+it in two places:
+
+- **Stage 8** smoke-tests the Service from *inside* the cluster, with a
+  short-lived `curlimages/curl` pod hitting
+  `http://cicd-demo-app.cicd-demo.svc.cluster.local/api/v1/info`. That still
+  proves the Service routes traffic to a ready pod serving this exact build —
+  which is the thing worth proving — without depending on an external address.
+- **Browser access** uses `kubectl port-forward` (step 6 below).
 
 ---
 
@@ -134,14 +158,28 @@ Expected:
 | 5 Docker Build | `Built [cicd-demo-app:<tag> cicd-demo-app:latest]` |
 | 6 Push to ACR | **skipped** (`DEPLOY_TARGET` is not `azure`) |
 | 7 Deploy | Ansible applies 5 manifests, rollout completes |
-| 8 Verify | smoke test passes, `imageTag` matches the build |
-
-Then open <http://localhost> — the landing page shows the build number, commit
-and the pod that served you.
+| 8 Verify | in-cluster smoke test passes, `imageTag` matches the build |
 
 ```bash
 kubectl -n cicd-demo get deployment,pods,svc -o wide
 ```
+
+You should see `2/2` ready pods. The Service will show `EXTERNAL-IP <pending>`
+— expected locally, for the reason explained at the top.
+
+To see it in a browser, forward the Service port (leave this running in its own
+terminal):
+
+```bash
+kubectl port-forward -n cicd-demo svc/cicd-demo-app 8081:80
+```
+
+Then open <http://localhost:8081>. The landing page shows the build number,
+commit and the pod that served you — refresh a few times and the pod name
+alternates between the two replicas, which demonstrates the Service
+load-balancing.
+
+Port 8081 is used because Jenkins occupies 8080.
 
 ---
 
@@ -155,9 +193,12 @@ sed -i 's/APP_RELEASE_MESSAGE: .*/APP_RELEASE_MESSAGE: "Release 2 - shipped auto
 git commit -am "Demo: change the release message" && git push
 ```
 
-Within two minutes Jenkins starts a build on its own. Refresh
-<http://localhost> and the message and build number change, with no downtime
-because the Deployment uses `maxUnavailable: 0`.
+Within two minutes Jenkins starts a build on its own. With `port-forward`
+running, refresh <http://localhost:8081> and the message and build number
+change, with no downtime because the Deployment uses `maxUnavailable: 0`.
+
+The port-forward survives the rollout because it targets the Service, not a
+specific pod.
 
 ---
 
@@ -187,7 +228,7 @@ image reference and the kubeconfig.
 | Registry | none (shared image store) | ACR | Local cannot prove the registry deliverable — Azure evidence is still required for that |
 | Node count | 1 (your machine) | 1 × `Standard_B2s` | Same scheduling constraints |
 | `metrics-server` | not installed | installed by default | The HPA applies but reports `<unknown>` locally and will not scale |
-| LoadBalancer | Docker Desktop publishes on `localhost` | Azure Standard Load Balancer with a public IP | Local endpoint is not reachable from another machine |
+| LoadBalancer | not functional — `EXTERNAL-IP` stays `<pending>` | Azure Standard Load Balancer with a public IP | Locally the browser needs `kubectl port-forward`; the "service endpoint in a browser" evidence still has to come from Azure |
 | TLS to API server | verification skipped | fully verified | Local only; noted in the report's security limitations |
 
 The screenshots in `docs/screenshots/README.md` that specifically require

@@ -19,6 +19,9 @@
 
   vars:
     # All of these can be overridden with -e on the command line.
+    # deploy_target: 'azure' waits for a real LoadBalancer IP; anything else
+    # (the local Docker Desktop cluster) skips that wait.
+    deploy_target: "local"
     acr_login_server: "acrcicdcia2.azurecr.io"
     image_name: "cicd-demo-app"
     image_tag: "latest"
@@ -83,28 +86,36 @@
       ansible.builtin.debug:
         var: rollout.stdout_lines
 
-    # AKS assigns an IP to the LoadBalancer; Docker Desktop reports the hostname
-    # "localhost" instead. One task reads whichever is set, so neither target
-    # waits out the retries unnecessarily.
-    - name: Wait for the LoadBalancer endpoint
-      ansible.builtin.shell:
-        cmd: |
-          endpoint=$(kubectl -n {{ k8s_namespace }} get svc {{ app_name }} \
-              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-          if [ -z "$endpoint" ]; then
-              endpoint=$(kubectl -n {{ k8s_namespace }} get svc {{ app_name }} \
-                  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-          fi
-          printf "%s" "$endpoint"
-        executable: /bin/bash
+    # Only Azure provisions a real LoadBalancer. Docker Desktop's kind-based
+    # cluster leaves EXTERNAL-IP <pending> because cloud-provider-kind cannot
+    # start its envoy container, so waiting for an address there would burn five
+    # minutes of retries and then fail. The Jenkins pipeline smoke-tests the
+    # local target from inside the cluster instead.
+    - name: Wait for the Azure Load Balancer public IP
+      ansible.builtin.command:
+        cmd: >-
+          kubectl -n {{ k8s_namespace }} get svc {{ app_name }}
+          -o jsonpath={.status.loadBalancer.ingress[0].ip}
       changed_when: false
       register: lb_endpoint
       retries: 30
       delay: 10
       until: lb_endpoint.stdout | trim | length > 0
+      when: deploy_target == 'azure'
 
     - name: Report the live application endpoint
       ansible.builtin.debug:
         msg: >-
           Build {{ build_number }} (commit {{ commit_sha }}) is live at
           http://{{ lb_endpoint.stdout | trim }} - image {{ image }}
+      when: deploy_target == 'azure'
+
+    - name: Report how to reach the local deployment
+      ansible.builtin.debug:
+        msg:
+          - "Build {{ build_number }} (commit {{ commit_sha }}) deployed - image {{ image }}"
+          - "Docker Desktop has no LoadBalancer controller, so EXTERNAL-IP stays <pending>."
+          - "Reach it from the host with:"
+          - "  kubectl port-forward -n {{ k8s_namespace }} svc/{{ app_name }} 8081:80"
+          - "then browse http://localhost:8081"
+      when: deploy_target != 'azure'

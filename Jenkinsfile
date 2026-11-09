@@ -254,6 +254,7 @@ pipeline {
 
                                 ansible-playbook ansible/deploy-app.yml \
                                     -i ansible/inventory.ini \
+                                    -e "deploy_target=azure" \
                                     -e "image=${FULL_IMAGE}" \
                                     -e "image_tag=${IMAGE_TAG}" \
                                     -e "build_number=${BUILD_NUMBER}" \
@@ -271,6 +272,7 @@ pipeline {
 
                             ansible-playbook ansible/deploy-app.yml \
                                 -i ansible/inventory.ini \
+                                -e "deploy_target=local" \
                                 -e "image=${FULL_IMAGE}" \
                                 -e "image_tag=${IMAGE_TAG}" \
                                 -e "build_number=${BUILD_NUMBER}" \
@@ -289,6 +291,8 @@ pipeline {
 
         stage('8. Verify Deployment') {
             steps {
+                // Common to both targets: the rollout only completes once new pods have
+                // passed their readiness probe, which is already proof of health.
                 sh '''
                     set -e
                     echo "--- rollout status ---"
@@ -296,49 +300,70 @@ pipeline {
 
                     echo "--- cluster state ---"
                     kubectl -n ${K8S_NAMESPACE} get deployment,pods,svc -o wide
-
-                    echo "--- resolving the service endpoint ---"
-                    ENDPOINT=""
-                    for i in $(seq 1 30); do
-                        # AKS assigns an IP; Docker Desktop reports the hostname "localhost".
-                        ENDPOINT=$(kubectl -n ${K8S_NAMESPACE} get svc ${APP_NAME} \
-                            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-                        if [ -z "$ENDPOINT" ]; then
-                            ENDPOINT=$(kubectl -n ${K8S_NAMESPACE} get svc ${APP_NAME} \
-                                -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-                        fi
-                        if [ -n "$ENDPOINT" ]; then break; fi
-                        sleep 10
-                    done
-                    if [ -z "$ENDPOINT" ]; then
-                        echo "No LoadBalancer endpoint was assigned in time"
-                        exit 1
-                    fi
-
-                    # "localhost" is the Docker Desktop load balancer on the HOST. From
-                    # inside this container localhost is the container itself, so the
-                    # smoke test has to go through host.docker.internal.
-                    CURL_HOST="$ENDPOINT"
-                    BROWSER_URL="http://$ENDPOINT"
-                    if [ "$ENDPOINT" = "localhost" ]; then
-                        CURL_HOST="host.docker.internal"
-                    fi
-
-                    echo "--- smoke test against http://$CURL_HOST ---"
-                    curl -fsS --retry 10 --retry-delay 6 --retry-connrefused \
-                         "http://$CURL_HOST/actuator/health"
-                    echo
-                    DEPLOYED=$(curl -fsS "http://$CURL_HOST/api/v1/info")
-                    echo "$DEPLOYED"
-
-                    # Fail the build if the live endpoint is not serving THIS build.
-                    if ! echo "$DEPLOYED" | grep -q "${IMAGE_TAG}"; then
-                        echo "Deployed build does not report image tag ${IMAGE_TAG}"
-                        exit 1
-                    fi
-
-                    echo "SUCCESS - build ${BUILD_NUMBER} is live at $BROWSER_URL"
                 '''
+                script {
+                    if (params.DEPLOY_TARGET == 'azure') {
+                        sh '''
+                            set -e
+                            echo "--- waiting for the Azure Load Balancer public IP ---"
+                            PUBLIC_IP=""
+                            for i in $(seq 1 30); do
+                                PUBLIC_IP=$(kubectl -n ${K8S_NAMESPACE} get svc ${APP_NAME} \
+                                    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+                                if [ -n "$PUBLIC_IP" ]; then break; fi
+                                sleep 10
+                            done
+                            if [ -z "$PUBLIC_IP" ]; then
+                                echo "No LoadBalancer IP was assigned in time"
+                                exit 1
+                            fi
+
+                            echo "--- smoke test against http://$PUBLIC_IP ---"
+                            curl -fsS --retry 10 --retry-delay 6 --retry-connrefused \
+                                 "http://$PUBLIC_IP/actuator/health"
+                            echo
+                            DEPLOYED=$(curl -fsS "http://$PUBLIC_IP/api/v1/info")
+                            echo "$DEPLOYED"
+
+                            # Fail the build if the live endpoint is not serving THIS build.
+                            if ! echo "$DEPLOYED" | grep -q "${IMAGE_TAG}"; then
+                                echo "Deployed build does not report image tag ${IMAGE_TAG}"
+                                exit 1
+                            fi
+
+                            echo "SUCCESS - build ${BUILD_NUMBER} is live at http://$PUBLIC_IP"
+                        '''
+                    } else {
+                        sh '''
+                            set -e
+                            # Docker Desktop's kind-based Kubernetes has no working
+                            # LoadBalancer controller (cloud-provider-kind cannot start its
+                            # envoy container), so the Service EXTERNAL-IP stays <pending>.
+                            # The smoke test therefore runs INSIDE the cluster against the
+                            # Service's DNS name, which still proves that the Service routes
+                            # traffic to a ready pod serving this exact build. The manifest
+                            # keeps type: LoadBalancer because that is what AKS needs.
+                            echo "--- in-cluster smoke test via the Service DNS name ---"
+                            DEPLOYED=$(kubectl -n ${K8S_NAMESPACE} run smoke-${BUILD_NUMBER} \
+                                --rm -i --restart=Never --timeout=180s \
+                                --image=curlimages/curl:8.11.1 -- \
+                                curl -fsS --max-time 15 --retry 5 --retry-delay 3 \
+                                "http://${APP_NAME}.${K8S_NAMESPACE}.svc.cluster.local/api/v1/info")
+                            echo "$DEPLOYED"
+
+                            # Fail the build if the Service is not serving THIS build.
+                            if ! echo "$DEPLOYED" | grep -q "${IMAGE_TAG}"; then
+                                echo "Deployed build does not report image tag ${IMAGE_TAG}"
+                                exit 1
+                            fi
+
+                            echo "SUCCESS - build ${BUILD_NUMBER} is serving inside the cluster."
+                            echo "To open it in a browser, run on the host:"
+                            echo "  kubectl port-forward -n ${K8S_NAMESPACE} svc/${APP_NAME} 8081:80"
+                            echo "then browse http://localhost:8081"
+                        '''
+                    }
+                }
             }
         }
     }

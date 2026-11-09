@@ -91,7 +91,7 @@ RUN printf '%s\n' \
     "git      : $(git --version)" \
     "docker   : $(docker --version)" \
     "kubectl  : $(kubectl version --client=true -o yaml | grep gitVersion | head -1 | tr -d ' ')" \
-    "az       : $(az version -o tsv --query '\"azure-cli\"')" \
+    "az       : $(az --version | head -1)" \
     "gitleaks : $(gitleaks version)" \
     "ansible  : $(ansible --version | head -1)" \
     > /usr/local/share/toolchain.txt \

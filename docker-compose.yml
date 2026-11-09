@@ -43,8 +43,17 @@ services:
 
     environment:
       TZ: Asia/Kolkata
-      # Give the JVM a sensible cap so Maven builds do not starve the host.
-      JAVA_OPTS: -Xmx1024m -Djava.awt.headless=true
+      # runSetupWizard=false skips the interactive "unlock Jenkins" wizard; the
+      # admin user and security realm are created by
+      # jenkins/init.groovy.d/01-security.groovy instead, so the controller comes
+      # up fully configured and reproducible.
+      JAVA_OPTS: >-
+        -Xmx1024m
+        -Djava.awt.headless=true
+        -Djenkins.install.runSetupWizard=false
+      # Supplied by the git-ignored .env file - never committed.
+      JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:?set JENKINS_ADMIN_PASSWORD in .env (see .env.example)}
       # Pinned explicitly because the container runs as root, so $HOME is /root
       # rather than /var/jenkins_home. Keeping both inside the persistent volume
       # means the kubeconfig and the Azure login survive a restart.

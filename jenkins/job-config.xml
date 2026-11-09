@@ -1,0 +1,64 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<!--
+  Job definition for the CI/CD pipeline, created by infra/jenkins-bootstrap.sh
+  through the Jenkins REST API. Keeping it as a file means the job itself is
+  version-controlled, not hand-clicked in the UI.
+
+  The job is deliberately thin: it only points at this repository's Jenkinsfile.
+  Everything that matters - stages, parameters, triggers - lives in the
+  Jenkinsfile, so the pipeline travels with the code.
+-->
+<flow-definition plugin="workflow-job">
+  <description>CIA-2: end-to-end CI/CD pipeline - Gitleaks, Maven, SonarQube Cloud, Docker, Kubernetes</description>
+  <keepDependencies>false</keepDependencies>
+  <!--
+    The parameters are declared here as well as in the Jenkinsfile. A pipeline
+    job normally only learns its parameters after the first run, which would make
+    the very first build unparameterised. Declaring them up front means the first
+    build can already be started with a chosen target. The Jenkinsfile remains the
+    source of truth and re-syncs them on every run.
+  -->
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>DEPLOY_TARGET</name>
+          <description>local = Docker Desktop Kubernetes. azure = ACR + AKS.</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>local</string>
+              <string>azure</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>RUN_SONAR</name>
+          <description>Run the SonarQube Cloud analysis and wait for the Quality Gate.</description>
+          <defaultValue>true</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/manisudhan/cicd-azure-cia2.git</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/main</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+    </scm>
+    <scriptPath>Jenkinsfile</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

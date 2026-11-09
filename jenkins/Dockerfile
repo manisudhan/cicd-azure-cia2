@@ -97,4 +97,9 @@ RUN printf '%s\n' \
     > /usr/local/share/toolchain.txt \
  && cat /usr/local/share/toolchain.txt
 
+# Startup scripts. /usr/share/jenkins/ref is the image's reference directory:
+# its contents are copied into $JENKINS_HOME on boot, which is the supported way
+# to ship init scripts when JENKINS_HOME is a volume.
+COPY init.groovy.d/ /usr/share/jenkins/ref/init.groovy.d/
+
 USER jenkins

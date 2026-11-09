@@ -49,10 +49,19 @@ fi
 AUTH="${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}"
 
 # ------------------------------------------------------------ Azure values ----
+# The Azure credentials and the Sonar token can be loaded independently, so that
+# the Sonar token can go in before Azure has finished provisioning.
+LOAD_AZURE=true
 if [ ! -f "$SP_FILE" ]; then
-    echo "ERROR: $SP_FILE not found."
-    echo "Run infra/azure-setup.sh first; it writes that file."
-    exit 1
+    if [ -n "${SONAR_TOKEN:-}" ]; then
+        echo "NOTE: $SP_FILE not found - loading only the SonarQube token."
+        echo "      Re-run this script after infra/azure-setup.sh for the Azure credentials."
+        LOAD_AZURE=false
+    else
+        echo "ERROR: $SP_FILE not found and SONAR_TOKEN is not set."
+        echo "Run infra/azure-setup.sh first, or set SONAR_TOKEN to load just that."
+        exit 1
+    fi
 fi
 
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
@@ -61,14 +70,16 @@ read_field() {
     "$PY_BIN" -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['$1'])" "$SP_FILE"
 }
 
-APP_ID=$(read_field appId)
-APP_PASSWORD=$(read_field password)
-TENANT_ID=$(read_field tenant)
-SUBSCRIPTION_ID=$(read_field subscriptionId)
+if [ "$LOAD_AZURE" = true ]; then
+    APP_ID=$(read_field appId)
+    APP_PASSWORD=$(read_field password)
+    TENANT_ID=$(read_field tenant)
+    SUBSCRIPTION_ID=$(read_field subscriptionId)
 
-if [ -z "$APP_ID" ] || [ -z "$APP_PASSWORD" ]; then
-    echo "ERROR: $SP_FILE is missing appId or password."
-    exit 1
+    if [ -z "$APP_ID" ] || [ -z "$APP_PASSWORD" ]; then
+        echo "ERROR: $SP_FILE is missing appId or password."
+        exit 1
+    fi
 fi
 
 # ---------------------------------------------------------- build the script --
@@ -97,12 +108,13 @@ def upsert = { creds ->
 }
 GROOVY_HEAD
 
-    echo "def appId = decode('$(b64 "$APP_ID")')"
-    echo "def appSecret = decode('$(b64 "$APP_PASSWORD")')"
-    echo "def tenantId = decode('$(b64 "$TENANT_ID")')"
-    echo "def subscriptionId = decode('$(b64 "$SUBSCRIPTION_ID")')"
+    if [ "$LOAD_AZURE" = true ]; then
+        echo "def appId = decode('$(b64 "$APP_ID")')"
+        echo "def appSecret = decode('$(b64 "$APP_PASSWORD")')"
+        echo "def tenantId = decode('$(b64 "$TENANT_ID")')"
+        echo "def subscriptionId = decode('$(b64 "$SUBSCRIPTION_ID")')"
 
-    cat <<'GROOVY_AZURE'
+        cat <<'GROOVY_AZURE'
 upsert(new UsernamePasswordCredentialsImpl(
         CredentialsScope.GLOBAL, 'azure-sp',
         'Azure service principal (appId / password)', appId, appSecret))
@@ -113,6 +125,7 @@ upsert(new StringCredentialsImpl(
         CredentialsScope.GLOBAL, 'azure-subscription-id',
         'Azure subscription id', Secret.fromString(subscriptionId)))
 GROOVY_AZURE
+    fi
 
     if [ -n "${SONAR_TOKEN:-}" ]; then
         echo "def sonarToken = decode('$(b64 "$SONAR_TOKEN")')"
@@ -145,10 +158,13 @@ CRUMB_FIELD=$("$PY_BIN" -c 'import json,sys; print(json.load(sys.stdin)["crumbRe
 CRUMB=$("$PY_BIN" -c 'import json,sys; print(json.load(sys.stdin)["crumb"])' <<<"$CRUMB_JSON")
 
 echo "Applying credentials"
+# The script is fed through stdin rather than as "script@<path>": on Windows,
+# curl is a native binary and cannot resolve the MSYS-style temporary path that
+# mktemp returns, which fails with "error encountered when reading a file".
 curl -fsS -X POST "$JENKINS_URL/scriptText" \
     -u "$AUTH" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
     -H "$CRUMB_FIELD: $CRUMB" \
-    --data-urlencode "script@$GROOVY_FILE"
+    --data-urlencode "script@-" < "$GROOVY_FILE"
 
 cat <<DONE
 

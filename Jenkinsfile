@@ -84,8 +84,8 @@ pipeline {
 
         // ---- SonarQube Cloud ----
         SONAR_HOST_URL    = 'https://sonarcloud.io'
-        SONAR_ORG         = 'CHANGE-ME-ORG'
-        SONAR_PROJECT_KEY = 'CHANGE-ME-ORG_cicd-demo-app'
+        SONAR_ORG         = 'manisudhan'
+        SONAR_PROJECT_KEY = 'manisudhan_cicd-azure-cia2'
 
         // Maven runs through the wrapper, so the agent needs no Maven installation.
         MAVEN      = './mvnw'

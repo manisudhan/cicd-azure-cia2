@@ -29,9 +29,9 @@
              sonar.organization / sonar.projectKey are overridden from the
              Jenkins pipeline so the same pom works for any fork. -->
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
-        <sonar.organization>CHANGE-ME-ORG</sonar.organization>
-        <sonar.projectKey>CHANGE-ME-ORG_cicd-demo-app</sonar.projectKey>
-        <sonar.projectName>cicd-demo-app</sonar.projectName>
+        <sonar.organization>manisudhan</sonar.organization>
+        <sonar.projectKey>manisudhan_cicd-azure-cia2</sonar.projectKey>
+        <sonar.projectName>cicd-azure-cia2</sonar.projectName>
         <sonar.java.source>21</sonar.java.source>
         <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
         <sonar.exclusions>src/main/resources/static/**,src/main/resources/templates/**</sonar.exclusions>

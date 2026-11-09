@@ -29,6 +29,14 @@
 # ===========================================================================
 set -euo pipefail
 
+# Pick an available Python for the small amount of JSON parsing below; "python3"
+# is not present on every Windows Git Bash install.
+PY_BIN="$(command -v python3 || command -v python || true)"
+if [ -z "$PY_BIN" ]; then
+    echo "ERROR: python3 or python must be on PATH to parse the Azure CLI output."
+    exit 1
+fi
+
 # --------------------------------------------------------------- settings ----
 LOCATION="${LOCATION:-centralindia}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-cicd-cia2}"
@@ -98,8 +106,26 @@ SP_JSON=$(az ad sp create-for-rbac \
     --scopes "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP" \
     --output json)
 
-SP_APP_ID=$(echo "$SP_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["appId"])')
-SP_PASSWORD=$(echo "$SP_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["password"])')
+SP_APP_ID=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["appId"])')
+SP_PASSWORD=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["password"])')
+
+# Also write the credentials to a git-ignored file so
+# infra/jenkins-azure-credentials.sh can load them into Jenkins without the
+# secret being retyped or pasted anywhere. Delete it once Jenkins has them.
+SP_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sp-credentials.json"
+"$PY_BIN" - "$SP_FILE" "$SP_APP_ID" "$SP_PASSWORD" "$TENANT_ID" "$SUBSCRIPTION_ID" <<'PYEOF'
+import json, os, stat, sys
+path, app_id, password, tenant, subscription = sys.argv[1:6]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump({
+        "appId": app_id,
+        "password": password,
+        "tenant": tenant,
+        "subscriptionId": subscription,
+    }, fh, indent=2)
+os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+PYEOF
+echo "      Credentials also written to sp-credentials.json (git-ignored)"
 
 echo "      Granting AcrPush on the registry"
 ACR_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv)

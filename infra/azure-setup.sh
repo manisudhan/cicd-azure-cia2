@@ -29,11 +29,29 @@
 # ===========================================================================
 set -euo pipefail
 
-# Pick an available Python for the small amount of JSON parsing below; "python3"
-# is not present on every Windows Git Bash install.
-PY_BIN="$(command -v python3 || command -v python || true)"
+# Git Bash / MSYS on Windows rewrites any argument that looks like an absolute
+# path. Azure resource ids and role-assignment scopes start with
+# "/subscriptions/...", and without this they arrive as
+# "C:/Program Files/Git/subscriptions/..." - which fails with the thoroughly
+# unhelpful "(MissingSubscription) The request did not have a subscription".
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
+# Pick a Python that actually RUNS, for the small amount of JSON parsing below.
+# Testing with "command -v" alone is not enough on Windows: python3 there is
+# often the Microsoft Store alias stub, which resolves fine but then prints
+# "Python was not found" and exits non-zero when invoked.
+PY_BIN=""
+for candidate in python python3 py; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+       && "$candidate" -c 'import json,sys' >/dev/null 2>&1; then
+        PY_BIN="$candidate"
+        break
+    fi
+done
 if [ -z "$PY_BIN" ]; then
-    echo "ERROR: python3 or python must be on PATH to parse the Azure CLI output."
+    echo "ERROR: no working Python found on PATH (tried python, python3, py)."
+    echo "It is needed to parse the Azure CLI JSON output."
     exit 1
 fi
 
@@ -83,7 +101,9 @@ done
 
 # --------------------------------------------------------------- 3. ACR ------
 echo "[3/5] Creating container registry $ACR_NAME (Basic)"
-if ! ACR_ERROR=$(az acr create \
+if az acr show --name "$ACR_NAME" --output none 2>/dev/null; then
+    echo "      Registry $ACR_NAME already exists - reusing it"
+elif ! ACR_ERROR=$(az acr create \
         --resource-group "$RESOURCE_GROUP" \
         --name "$ACR_NAME" \
         --sku Basic \
@@ -114,30 +134,64 @@ ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
 
 # --------------------------------------------------------------- 4. AKS ------
 echo "[4/5] Creating AKS cluster $AKS_CLUSTER ($AKS_NODE_COUNT x $AKS_NODE_SIZE, ${AKS_DISK_SIZE}GB disk)"
-echo "      This takes 5-10 minutes."
-az aks create \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$AKS_CLUSTER" \
-    --node-count "$AKS_NODE_COUNT" \
-    --node-vm-size "$AKS_NODE_SIZE" \
-    --node-osdisk-size "$AKS_DISK_SIZE" \
-    --tier free \
-    --generate-ssh-keys \
-    --attach-acr "$ACR_NAME" \
-    --enable-managed-identity \
-    --output none
-echo "      Cluster created and granted AcrPull on $ACR_NAME"
+if az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" --output none 2>/dev/null; then
+    echo "      Cluster $AKS_CLUSTER already exists - reusing it"
+    # Make sure the AcrPull grant is in place even on a reused cluster.
+    az aks update \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$AKS_CLUSTER" \
+        --attach-acr "$ACR_NAME" \
+        --output none 2>/dev/null \
+        && echo "      AcrPull on $ACR_NAME confirmed" \
+        || echo "      AcrPull already granted"
+else
+    echo "      This takes 5-10 minutes."
+    az aks create \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$AKS_CLUSTER" \
+        --node-count "$AKS_NODE_COUNT" \
+        --node-vm-size "$AKS_NODE_SIZE" \
+        --node-osdisk-size "$AKS_DISK_SIZE" \
+        --tier free \
+        --generate-ssh-keys \
+        --attach-acr "$ACR_NAME" \
+        --enable-managed-identity \
+        --output none
+    echo "      Cluster created and granted AcrPull on $ACR_NAME"
+fi
 
 # ------------------------------------------------------ 5. service principal -
 echo "[5/5] Creating service principal $SP_NAME for Jenkins"
-SP_JSON=$(az ad sp create-for-rbac \
-    --name "$SP_NAME" \
-    --role Contributor \
-    --scopes "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP" \
-    --output json)
+RG_SCOPE="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP"
+EXISTING_APP_ID=$(az ad sp list --display-name "$SP_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)
 
-SP_APP_ID=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["appId"])')
-SP_PASSWORD=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["password"])')
+if [ -n "${EXISTING_APP_ID:-}" ]; then
+    # The principal survives a failed run, but its password is only ever shown
+    # once, so there is nothing to recover - reset it to get a usable secret.
+    echo "      Service principal already exists ($EXISTING_APP_ID) - resetting its password"
+    SP_JSON=$(az ad sp credential reset --id "$EXISTING_APP_ID" --output json)
+    SP_APP_ID="$EXISTING_APP_ID"
+    SP_PASSWORD=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["password"])')
+    echo "      Granting Contributor on the resource group"
+    az role assignment create \
+        --assignee "$SP_APP_ID" \
+        --role Contributor \
+        --scope "$RG_SCOPE" \
+        --output none 2>/dev/null || echo "      Contributor already assigned"
+else
+    SP_JSON=$(az ad sp create-for-rbac \
+        --name "$SP_NAME" \
+        --role Contributor \
+        --scopes "$RG_SCOPE" \
+        --output json)
+    SP_APP_ID=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["appId"])')
+    SP_PASSWORD=$(echo "$SP_JSON" | "$PY_BIN" -c 'import sys,json; print(json.load(sys.stdin)["password"])')
+fi
+
+if [ -z "${SP_APP_ID:-}" ] || [ -z "${SP_PASSWORD:-}" ]; then
+    echo "ERROR: could not obtain service principal credentials."
+    exit 1
+fi
 
 # Also write the credentials to a git-ignored file so
 # infra/jenkins-azure-credentials.sh can load them into Jenkins without the
@@ -163,7 +217,7 @@ az role assignment create \
     --assignee "$SP_APP_ID" \
     --role AcrPush \
     --scope "$ACR_ID" \
-    --output none
+    --output none 2>/dev/null || echo "      AcrPush already assigned"
 
 echo "      Granting Azure Kubernetes Service Cluster Admin on the cluster"
 AKS_ID=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" --query id -o tsv)
@@ -171,7 +225,7 @@ az role assignment create \
     --assignee "$SP_APP_ID" \
     --role "Azure Kubernetes Service Cluster Admin Role" \
     --scope "$AKS_ID" \
-    --output none
+    --output none 2>/dev/null || echo "      Cluster Admin already assigned"
 
 # ------------------------------------------------------------- 5. summary ----
 cat <<SUMMARY

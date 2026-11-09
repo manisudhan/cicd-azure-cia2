@@ -28,9 +28,18 @@ COOKIE_JAR="$(mktemp)"
 GROOVY_FILE="$(mktemp)"
 trap 'rm -f "$COOKIE_JAR" "$GROOVY_FILE"' EXIT
 
-PY_BIN="$(command -v python3 || command -v python || true)"
+# Pick a Python that actually RUNS: on Windows, python3 is often the Microsoft
+# Store alias stub, which resolves but fails when invoked.
+PY_BIN=""
+for candidate in python python3 py; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+       && "$candidate" -c 'import json,sys' >/dev/null 2>&1; then
+        PY_BIN="$candidate"
+        break
+    fi
+done
 if [ -z "$PY_BIN" ]; then
-    echo "ERROR: python3 or python must be on PATH."
+    echo "ERROR: no working Python found on PATH (tried python, python3, py)."
     exit 1
 fi
 

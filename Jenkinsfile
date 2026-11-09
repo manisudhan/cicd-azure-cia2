@@ -38,9 +38,13 @@ pipeline {
     parameters {
         choice(
             name: 'DEPLOY_TARGET',
-            choices: ['local', 'azure'],
-            description: 'local = Docker Desktop Kubernetes (no Azure account needed). ' +
-                         'azure = push to ACR and deploy to AKS.'
+            // azure is first, and therefore the default, so that a build started
+            // automatically by SCM polling deploys to AKS. That is what makes the
+            // "push a commit and watch it reach the public endpoint" demonstration
+            // work without anyone choosing a parameter by hand.
+            choices: ['azure', 'local'],
+            description: 'azure = push to ACR and deploy to AKS. ' +
+                         'local = Docker Desktop Kubernetes (no Azure account needed).'
         )
         booleanParam(
             name: 'RUN_SONAR',

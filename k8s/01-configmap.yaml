@@ -15,7 +15,7 @@ data:
   # Non-secret runtime settings. Real credentials would live in a Kubernetes
   # Secret backed by Azure Key Vault, never in a ConfigMap.
   APP_ENVIRONMENT: "production"
-  APP_RELEASE_MESSAGE: "${RELEASE_MESSAGE}"
+  APP_RELEASE_MESSAGE: "Release 2 - this change reached Azure automatically via Jenkins"
   # Build provenance, injected by the pipeline so the running pod can prove
   # which commit and which Jenkins build produced it.
   APP_IMAGE_TAG: "${IMAGE_TAG}"

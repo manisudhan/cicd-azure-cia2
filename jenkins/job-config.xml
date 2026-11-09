@@ -26,8 +26,8 @@
           <description>local = Docker Desktop Kubernetes. azure = ACR + AKS.</description>
           <choices class="java.util.Arrays$ArrayList">
             <a class="string-array">
-              <string>local</string>
               <string>azure</string>
+              <string>local</string>
             </a>
           </choices>
         </hudson.model.ChoiceParameterDefinition>

@@ -136,14 +136,26 @@ ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
 echo "[4/5] Creating AKS cluster $AKS_CLUSTER ($AKS_NODE_COUNT x $AKS_NODE_SIZE, ${AKS_DISK_SIZE}GB disk)"
 if az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" --output none 2>/dev/null; then
     echo "      Cluster $AKS_CLUSTER already exists - reusing it"
-    # Make sure the AcrPull grant is in place even on a reused cluster.
-    az aks update \
-        --resource-group "$RESOURCE_GROUP" \
-        --name "$AKS_CLUSTER" \
-        --attach-acr "$ACR_NAME" \
-        --output none 2>/dev/null \
-        && echo "      AcrPull on $ACR_NAME confirmed" \
-        || echo "      AcrPull already granted"
+    # Check the AcrPull grant rather than re-attaching: "az aks update
+    # --attach-acr" performs a full cluster update that takes several minutes
+    # even when the grant is already in place, which is long enough to look
+    # like a hang.
+    KUBELET_ID=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" \
+        --query identityProfile.kubeletidentity.objectId -o tsv 2>/dev/null || true)
+    ACR_RESOURCE_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv 2>/dev/null || true)
+    if [ -n "$KUBELET_ID" ] && [ -n "$ACR_RESOURCE_ID" ] \
+       && az role assignment list --assignee "$KUBELET_ID" --scope "$ACR_RESOURCE_ID" \
+            --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv 2>/dev/null | grep -qv '^0$'; then
+        echo "      AcrPull on $ACR_NAME already granted"
+    else
+        echo "      Granting AcrPull on $ACR_NAME (a few minutes)"
+        az aks update \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER" \
+            --attach-acr "$ACR_NAME" \
+            --output none
+        echo "      AcrPull granted"
+    fi
 else
     echo "      This takes 5-10 minutes."
     az aks create \

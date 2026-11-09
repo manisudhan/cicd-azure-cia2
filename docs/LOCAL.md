@@ -14,7 +14,7 @@ without paying for cluster time.
 | Stage 6 (push to registry) | skipped — see below | pushes to ACR |
 | Stage 7 (deploy) | Docker Desktop Kubernetes | AKS |
 | Stage 8 (verify) | smoke-tests the Service from inside the cluster | smoke-tests the public LoadBalancer IP |
-| Browser access | `kubectl port-forward` — see step 6 | the LoadBalancer's public IP |
+| Browser access | `http://localhost` (LoadBalancer on host port 80) | the LoadBalancer's public IP |
 | Azure account | not needed | required |
 | Cost | $0 | ~$2.05/day |
 
@@ -30,22 +30,28 @@ cluster. Kubernetes reported `Successfully pulled image "local-probe:v1" in
 944ms` and the pod reached `Running`, which it could only do from the local
 store.
 
-**Why there is no browser endpoint on `http://localhost`.** The same probe showed
-that a `type: LoadBalancer` Service stays `EXTERNAL-IP <pending>` on this
-cluster: Docker Desktop's Kubernetes is kind-based, and its
-`cloud-provider-kind` controller fails to start the envoy container it uses as
-the load balancer (`exit status 125`, with the envoy image already present).
+**The LoadBalancer works, but it needs host port 80 free.** Docker Desktop's
+`cloud-provider-kind` publishes a `type: LoadBalancer` Service on the host, so
+after a successful build the app is browsable at **<http://localhost>** with no
+port-forward.
 
-The manifest deliberately keeps `type: LoadBalancer`, because that is what AKS
-needs and it is part of the assignment's design. The local target works around
-it in two places:
+There is a trap worth knowing about, because it cost time here. A first probe
+using a Service on port **8080** left `EXTERNAL-IP <pending>` and logged
+`failed to create containers kindccm-... exit status 125`. That looked like a
+broken controller, but the real cause was that the host's port 8080 was already
+taken by an unrelated native Jenkins installation, so the load balancer
+container could not bind its published port. The application Service uses port
+80, which was free, and it received its address normally. If host port 80 is
+also occupied on your machine, the same `<pending>` symptom appears — use a
+port-forward in that case (step 6).
 
-- **Stage 8** smoke-tests the Service from *inside* the cluster, with a
-  short-lived `curlimages/curl` pod hitting
-  `http://cicd-demo-app.cicd-demo.svc.cluster.local/api/v1/info`. That still
-  proves the Service routes traffic to a ready pod serving this exact build —
-  which is the thing worth proving — without depending on an external address.
-- **Browser access** uses `kubectl port-forward` (step 6 below).
+Stage 8 nevertheless smoke-tests the Service from *inside* the cluster, with a
+short-lived `curlimages/curl` pod hitting
+`http://cicd-demo-app.cicd-demo.svc.cluster.local/api/v1/info`. That is
+deliberate: it does not depend on a host port being free, and from inside the
+Jenkins container `localhost` is the container rather than the host. It still
+proves the Service routes traffic to a ready pod serving this exact build,
+which is the thing worth proving.
 
 ---
 
@@ -172,23 +178,21 @@ Expected:
 kubectl -n cicd-demo get deployment,pods,svc -o wide
 ```
 
-You should see `2/2` ready pods. The Service will show `EXTERNAL-IP <pending>`
-— expected locally, for the reason explained at the top.
+You should see `2/2` ready pods and an `EXTERNAL-IP` on the Service.
 
-To see it in a browser, forward the Service port (leave this running in its own
-terminal):
+Open <http://localhost>. The landing page shows the build number, commit and the
+pod that served you — refresh a few times and the pod name alternates between
+the two replicas, demonstrating the Service load-balancing.
+
+If the Service shows `EXTERNAL-IP <pending>`, something else holds host port 80.
+Use a port-forward instead (leave it running in its own terminal):
 
 ```bash
 kubectl port-forward -n cicd-demo svc/cicd-demo-app 8081:80
 ```
 
-Then open <http://localhost:8081>. The landing page shows the build number,
-commit and the pod that served you — refresh a few times and the pod name
-alternates between the two replicas, which demonstrates the Service
-load-balancing.
-
-Port 8081 is used to stay clear of 8080, which a separately installed native
-Jenkins may already occupy on this machine.
+Then open <http://localhost:8081>. Port 8081 stays clear of 8080, which a
+separately installed native Jenkins may already occupy.
 
 ---
 
@@ -202,12 +206,9 @@ sed -i 's/APP_RELEASE_MESSAGE: .*/APP_RELEASE_MESSAGE: "Release 2 - shipped auto
 git commit -am "Demo: change the release message" && git push
 ```
 
-Within two minutes Jenkins starts a build on its own. With `port-forward`
-running, refresh <http://localhost:8081> and the message and build number
-change, with no downtime because the Deployment uses `maxUnavailable: 0`.
-
-The port-forward survives the rollout because it targets the Service, not a
-specific pod.
+Within two minutes Jenkins starts a build on its own. Refresh
+<http://localhost> and the message and build number change, with no downtime
+because the Deployment uses `maxUnavailable: 0`.
 
 ---
 
@@ -237,7 +238,7 @@ image reference and the kubeconfig.
 | Registry | none (shared image store) | ACR | Local cannot prove the registry deliverable — Azure evidence is still required for that |
 | Node count | 1 (your machine) | 1 × `Standard_B2s` | Same scheduling constraints |
 | `metrics-server` | not installed | installed by default | The HPA applies but reports `<unknown>` locally and will not scale |
-| LoadBalancer | not functional — `EXTERNAL-IP` stays `<pending>` | Azure Standard Load Balancer with a public IP | Locally the browser needs `kubectl port-forward`; the "service endpoint in a browser" evidence still has to come from Azure |
+| LoadBalancer | `cloud-provider-kind`, published on host port 80 | Azure Standard Load Balancer with a public IP | Works locally at `http://localhost`, but it is bound to this machine only — not reachable from another device, so the public-endpoint evidence is still stronger from Azure |
 | TLS to API server | verification skipped | fully verified | Local only; noted in the report's security limitations |
 
 The screenshots in `docs/screenshots/README.md` that specifically require

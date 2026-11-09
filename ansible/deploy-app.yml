@@ -114,8 +114,8 @@
       ansible.builtin.debug:
         msg:
           - "Build {{ build_number }} (commit {{ commit_sha }}) deployed - image {{ image }}"
-          - "Docker Desktop has no LoadBalancer controller, so EXTERNAL-IP stays <pending>."
-          - "Reach it from the host with:"
+          - "Docker Desktop publishes the LoadBalancer on host port 80:"
+          - "  http://localhost"
+          - "If host port 80 is already taken, use a port-forward instead:"
           - "  kubectl port-forward -n {{ k8s_namespace }} svc/{{ app_name }} 8081:80"
-          - "then browse http://localhost:8081"
       when: deploy_target != 'azure'

@@ -336,13 +336,13 @@ pipeline {
                     } else {
                         sh '''
                             set -e
-                            # Docker Desktop's kind-based Kubernetes has no working
-                            # LoadBalancer controller (cloud-provider-kind cannot start its
-                            # envoy container), so the Service EXTERNAL-IP stays <pending>.
-                            # The smoke test therefore runs INSIDE the cluster against the
-                            # Service's DNS name, which still proves that the Service routes
-                            # traffic to a ready pod serving this exact build. The manifest
-                            # keeps type: LoadBalancer because that is what AKS needs.
+                            # The smoke test runs INSIDE the cluster, against the Service's
+                            # DNS name. Docker Desktop does publish the LoadBalancer on the
+                            # host's port 80, but that only works while port 80 is free on
+                            # the host, and from inside this container "localhost" is the
+                            # container itself. Testing through the Service DNS name avoids
+                            # both problems and still proves the Service routes traffic to a
+                            # ready pod serving this exact build.
                             echo "--- in-cluster smoke test via the Service DNS name ---"
                             DEPLOYED=$(kubectl -n ${K8S_NAMESPACE} run smoke-${BUILD_NUMBER} \
                                 --rm -i --restart=Never --timeout=180s \
@@ -358,9 +358,10 @@ pipeline {
                             fi
 
                             echo "SUCCESS - build ${BUILD_NUMBER} is serving inside the cluster."
-                            echo "To open it in a browser, run on the host:"
+                            echo "Open it in a browser at http://localhost"
+                            echo "(Docker Desktop publishes the LoadBalancer on host port 80.)"
+                            echo "If host port 80 is taken, use a port-forward instead:"
                             echo "  kubectl port-forward -n ${K8S_NAMESPACE} svc/${APP_NAME} 8081:80"
-                            echo "then browse http://localhost:8081"
                         '''
                     }
                 }

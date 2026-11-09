@@ -127,13 +127,15 @@ cat <<DONE
  Docker image store, so the image built in stage 5 is already visible to the
  cluster and the Deployment's imagePullPolicy: IfNotPresent uses it directly.
 
- Docker Desktop has no working LoadBalancer controller, so the Service keeps
- EXTERNAL-IP <pending>. That is expected: stage 8 smoke-tests the Service from
- inside the cluster instead. To open the app in a browser, run:
+ After a successful build the application is browsable at:
+
+     http://localhost
+
+ Docker Desktop's cloud-provider-kind publishes the LoadBalancer Service on the
+ host's port 80. If something else already holds port 80, the Service will stay
+ EXTERNAL-IP <pending>; use a port-forward in that case:
 
      kubectl port-forward -n cicd-demo svc/cicd-demo-app 8081:80
-
- then browse http://localhost:8081
 
  Re-run this script if you recreate the Jenkins container (docker compose up
  --force-recreate) or reset the Docker Desktop cluster: the network attachment

@@ -29,6 +29,12 @@ USER root
 ARG KUBECTL_VERSION=v1.31.0
 ARG GITLEAKS_VERSION=8.30.1
 
+# Retry transient network failures instead of failing the whole image build.
+# Container DNS and package mirrors are both occasionally flaky, and a 15-minute
+# build should not be thrown away over one failed lookup.
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' \
+        > /etc/apt/apt.conf.d/80-retries
+
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -47,7 +53,8 @@ RUN set -eux; \
 # Docker CLI only - the daemon is the host's, reached via the mounted socket.
 RUN set -eux; \
     install -m 0755 -d /etc/apt/keyrings; \
-    curl -fsSL https://download.docker.com/linux/debian/gpg \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+        https://download.docker.com/linux/debian/gpg \
         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
     chmod a+r /etc/apt/keyrings/docker.gpg; \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] \
@@ -58,17 +65,20 @@ https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_C
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
-    curl -fsSLo /usr/local/bin/kubectl \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+        -o /usr/local/bin/kubectl \
         "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"; \
     chmod 0755 /usr/local/bin/kubectl; \
     kubectl version --client=true
 
 RUN set -eux; \
-    curl -fsSL "https://aka.ms/InstallAzureCLIDeb" | bash; \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+        "https://aka.ms/InstallAzureCLIDeb" | bash; \
     az version
 
 RUN set -eux; \
-    curl -fsSLo /tmp/gitleaks.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+        -o /tmp/gitleaks.tar.gz \
         "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"; \
     tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks; \
     chmod 0755 /usr/local/bin/gitleaks; \

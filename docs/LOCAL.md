@@ -76,7 +76,7 @@ docker compose up -d --build
 docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
-Open <http://localhost:8080>, unlock it, choose **Select plugins to install →
+Open <http://localhost:8090>, unlock it, choose **Select plugins to install →
 None** (they are baked into the image), and create your admin user.
 
 ---
@@ -87,23 +87,31 @@ None** (they are baked into the image), and create your admin user.
 bash infra/local-connect.sh
 ```
 
-This copies your kubeconfig into the Jenkins container and repoints the API
-server address. Two things need explaining for the viva:
+This gets the Jenkins container talking to the cluster. Three things are worth
+being able to explain in the viva, because each was a real obstacle:
 
-- The host kubeconfig points at `https://127.0.0.1:6443`. Inside a container
-  `127.0.0.1` is the *container*, so the script rewrites it to
-  `host.docker.internal`, which is how a container addresses its host.
-- Docker Desktop's API server certificate is issued for `127.0.0.1` and
-  `kubernetes.docker.internal`, not for `host.docker.internal`, so the script
-  sets `--insecure-skip-tls-verify` **for this local cluster only**. The Azure
-  target is unaffected: it gets a fresh, fully verified kubeconfig from
-  `az aks get-credentials`.
+- **The container has to join the `kind` network.** Docker Desktop's Kubernetes
+  is kind-based: the control plane runs as a container on a Docker network
+  called `kind`, and its API server is published on the **host's loopback
+  only**. So `host.docker.internal:6443` is refused from inside a container —
+  there is nothing listening on the host gateway address. The script attaches
+  the Jenkins container to that network instead.
+- **The node is addressed by name, not IP.** The server field becomes
+  `https://desktop-control-plane:6443`. That name resolves over the `kind`
+  network's DNS, and — importantly — it is in the API server certificate's SAN
+  list, so **TLS verification stays fully enabled**. Using the node's IP would
+  have forced `--insecure-skip-tls-verify`; using the name avoids that.
+- **`kubectl config set`, not `kubectl config set-cluster`.** `set-cluster`
+  rewrites every flag-backed field, so calling it to change the server silently
+  drops the `certificate-authority-data` the CA check needs. `config set`
+  changes exactly one field.
 
 The script ends by running `kubectl get nodes` from inside the container, so you
-know the connection works before you start a build.
+know the connection works before starting a build.
 
-Re-run it if you ever reset the Docker Desktop cluster — the client certificate
-changes.
+Re-run it whenever you recreate the Jenkins container or reset the Docker
+Desktop cluster: the network attachment and the kubeconfig live in the
+container, not in the image.
 
 ---
 
@@ -179,7 +187,8 @@ commit and the pod that served you — refresh a few times and the pod name
 alternates between the two replicas, which demonstrates the Service
 load-balancing.
 
-Port 8081 is used because Jenkins occupies 8080.
+Port 8081 is used to stay clear of 8080, which a separately installed native
+Jenkins may already occupy on this machine.
 
 ---
 

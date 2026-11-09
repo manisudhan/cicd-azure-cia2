@@ -27,8 +27,11 @@ services:
     user: root
 
     ports:
-      - "8080:8080"     # web UI and the /github-webhook/ endpoint
-      - "50000:50000"   # inbound agent port (unused: builds run on the controller)
+      # Published on 8090 because a separate, pre-existing native Jenkins may
+      # already hold 8080 on this machine. 8080 inside the container is
+      # unchanged, so the healthcheck and Jenkins' own config stay standard.
+      - "8090:8080"     # web UI and the /github-webhook/ endpoint
+      - "50001:50000"   # inbound agent port (unused: builds run on the controller)
 
     volumes:
       # Jenkins home: jobs, credentials, build history and the ~/.m2 Maven cache.

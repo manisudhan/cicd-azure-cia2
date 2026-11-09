@@ -150,7 +150,7 @@ bash infra/local-connect.sh
 bash infra/azure-setup.sh
 ```
 
-Either way, open <http://localhost:8080>, add the credentials, point a Pipeline
+Either way, open <http://localhost:8090>, add the credentials, point a Pipeline
 job at this repository, and push a commit.
 
 ### Run the application locally
@@ -159,8 +159,7 @@ job at this repository, and push a commit.
 ./mvnw spring-boot:run
 ```
 
-Then open <http://localhost:8080> — note this clashes with Jenkins, so stop one
-or the other first.
+Then open <http://localhost:8080>. Jenkins is on 8090, so there is no clash.
 
 ```bash
 ./mvnw clean verify

@@ -26,9 +26,11 @@ Ansible is **not** required on your machine: it is built into the Jenkins image.
 > WSL 2 based engine"). The Jenkins container mounts the host Docker socket to
 > build the application image, which needs that backend.
 
-> **Port 8080** is used by Jenkins. The Spring Boot app also defaults to 8080,
-> so don't run `./mvnw spring-boot:run` at the same time — or run the app on a
-> different port with `./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=9090`.
+> **Ports.** Jenkins is published on **8090**, not 8080, because a separately
+> installed native Jenkins may already hold 8080 on this machine (that was the
+> case here). The Spring Boot app still uses 8080 when run directly with
+> `./mvnw spring-boot:run`, so the two no longer clash. Change the published
+> port in `docker-compose.yml` if 8090 is taken too.
 
 ---
 
@@ -102,7 +104,7 @@ Watch for `Jenkins is fully up and running`, then get the unlock password:
 docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
-Open <http://localhost:8080>, paste the password, choose **Select plugins to
+Open <http://localhost:8090>, paste the password, choose **Select plugins to
 install → None** (they are already installed), and create your admin user.
 
 Confirm the toolchain that was baked into the image:
@@ -173,7 +175,7 @@ winget install Cloudflare.cloudflared
 ```
 
 ```bash
-cloudflared tunnel --url http://localhost:8080
+cloudflared tunnel --url http://localhost:8090
 ```
 
 That prints a public `https://<random>.trycloudflare.com` URL. In the GitHub
@@ -274,5 +276,5 @@ Running ≈ $2.05/day, paused ≈ $0.35/day, Jenkins ≈ $0.
 | Push does not trigger a build | Polling runs every two minutes — wait, or click **Build Now**. Check the job's *Git Polling Log* for errors. |
 | Webhook delivery fails | The `trycloudflare.com` URL changes on every tunnel restart; update the webhook's Payload URL. |
 | Jenkins is slow or the build OOMs | Raise the container's memory in Docker Desktop (Settings → Resources) and `JAVA_OPTS` in `docker-compose.yml`. |
-| Port 8080 already in use | Something else holds it — often a local `spring-boot:run`. Stop it, or change the published port in `docker-compose.yml`. |
+| `ports are not available: exposing port TCP 0.0.0.0:8090` | Something else holds the port. Find it with `Get-NetTCPConnection -LocalPort 8090 -State Listen` then `Get-Process -Id <pid>`, and either stop it or change the published port in `docker-compose.yml`. |
 | `bash: ./mvnw: /bin/sh^M: bad interpreter` | Line endings. `.gitattributes` forces LF; re-clone, or run `git add --renormalize .`. |

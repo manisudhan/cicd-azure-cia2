@@ -2,18 +2,17 @@
 # ===========================================================================
 # Deletes everything created by azure-setup.sh so the free credits stop being
 # consumed. Deleting the resource group removes the AKS cluster, its node
-# resource group, the registry, the VM, the disks, the public IPs and the
-# Load Balancer in one operation.
+# resource group, the registry and every image in it, the node disk, the public
+# IP and the Load Balancer in one operation.
 #
 #   bash infra/azure-teardown.sh
 #
-# To pause instead of delete (keeps the cluster and images, stops most cost):
-#   az vm stop      --resource-group rg-cicd-cia2 --name vm-jenkins
-#   az vm deallocate --resource-group rg-cicd-cia2 --name vm-jenkins
-#   az aks stop     --resource-group rg-cicd-cia2 --name aks-cicd-cia2
-# and to resume:
-#   az aks start    --resource-group rg-cicd-cia2 --name aks-cicd-cia2
-#   az vm start     --resource-group rg-cicd-cia2 --name vm-jenkins
+# To PAUSE instead of delete - keeps the cluster config and the images, and
+# drops the cost from about 2.05 to about 0.35 USD/day - use:
+#   bash infra/azure-pause.sh      and      bash infra/azure-resume.sh
+#
+# Jenkins runs locally, so it costs nothing in Azure. Stop it with:
+#   docker compose down            (keeps the cicd_jenkins_home volume)
 # ===========================================================================
 set -euo pipefail
 
@@ -21,7 +20,8 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-rg-cicd-cia2}"
 SP_NAME="${SP_NAME:-sp-cicd-cia2}"
 
 echo "This will PERMANENTLY DELETE the resource group '$RESOURCE_GROUP'"
-echo "and every resource inside it (AKS, ACR with all images, the Jenkins VM)."
+echo "and every resource inside it (the AKS cluster and the ACR registry with"
+echo "all its images). Your local Jenkins and its build history are untouched."
 az resource list --resource-group "$RESOURCE_GROUP" \
     --query "[].{name:name, type:type}" --output table 2>/dev/null || {
         echo "Resource group '$RESOURCE_GROUP' not found - nothing to do."

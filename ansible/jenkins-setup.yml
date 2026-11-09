@@ -1,9 +1,17 @@
 ---
 # ===========================================================================
-# Configuration management: turn a bare Ubuntu VM into the CI/CD build server.
+# OPTIONAL - configuration management for a cloud-hosted Jenkins.
 #
-# Run once, from WSL / Linux / macOS, after infra/azure-setup.sh has created
-# the VM and you have put its public IP into inventory.ini:
+# In this project Jenkins runs locally in Docker (docker-compose.yml plus
+# jenkins/Dockerfile) so that no VM, public IP or managed disk is billed in
+# Azure. The playbook that the pipeline actually uses is deploy-app.yml.
+#
+# This playbook is kept for the alternative topology: if you move the Jenkins
+# controller onto an Azure VM, it turns a bare Ubuntu host into an identical
+# build server - same Java, Docker, kubectl, Azure CLI, Gitleaks and Ansible.
+#
+# To use it, create a VM, put its public IP into inventory.ini in place of
+# VM_PUBLIC_IP, then from WSL / Linux / macOS:
 #
 #     cd ansible
 #     ansible-playbook -i inventory.ini jenkins-setup.yml

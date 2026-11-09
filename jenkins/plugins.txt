@@ -1,0 +1,21 @@
+# Jenkins plugins required by the pipeline, installed at image build time so the
+# job runs without clicking through the plugin wizard.
+# Versions are resolved by jenkins-plugin-cli against the controller version.
+
+# --- Pipeline (declarative Jenkinsfile) ---
+workflow-aggregator
+pipeline-stage-view
+
+# --- Source control + webhook/polling triggers ---
+git
+github
+github-branch-source
+
+# --- Secrets: used by the withCredentials blocks in the Jenkinsfile ---
+credentials-binding
+plain-credentials
+
+# --- Reporting ---
+junit
+timestamper
+ws-cleanup

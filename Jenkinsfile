@@ -3,7 +3,7 @@
 /*
  * End-to-end CI/CD pipeline for the Java web application.
  *
- *  GitHub push  ->  webhook  ->  Jenkins (Azure VM)
+ *  GitHub push  ->  Jenkins (local, in Docker - see docker-compose.yml)
  *      1. Checkout       source code + git metadata
  *      2. Secret Scan    Gitleaks over the full git history      (security gate)
  *      3. Build & Test   Maven compile, unit tests, JaCoCo coverage
@@ -31,10 +31,13 @@ pipeline {
     }
 
     triggers {
-        // Primary trigger is the GitHub webhook; polling is a safety net in case
-        // webhook delivery fails during the demo.
+        // Jenkins runs on localhost, which GitHub cannot reach directly, so SCM
+        // polling is the primary automatic trigger: a push is picked up within
+        // about two minutes with no manual action and no inbound network access.
+        pollSCM('H/2 * * * *')
+        // Also honour a real webhook if localhost is exposed through a tunnel
+        // (see docs/SETUP.md step 6); harmless when no tunnel is running.
         githubPush()
-        pollSCM('H/5 * * * *')
     }
 
     environment {

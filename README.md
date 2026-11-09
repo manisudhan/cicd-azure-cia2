@@ -9,10 +9,14 @@ A Java web application built, tested, scanned, containerised and deployed to
 
 ## Architecture
 
+Jenkins runs locally in Docker; Azure hosts only the registry and the cluster.
+That keeps the cloud bill to about **$2/day while running** and **$0.35/day
+paused**, instead of ~$4.50/day for a cloud-hosted Jenkins VM.
+
 ```mermaid
 flowchart LR
     DEV[Developer] -->|git push| GH[(GitHub<br/>public repo)]
-    GH -->|webhook| J[Jenkins<br/>Azure VM]
+    GH -->|SCM poll / webhook| J[Jenkins<br/>local Docker container]
 
     subgraph PIPE[Jenkins pipeline]
         direction TB
@@ -26,24 +30,31 @@ flowchart LR
     end
 
     J --> PIPE
-    S6 --> ACR[(Azure Container<br/>Registry)]
-    S7 --> AKS[Azure Kubernetes<br/>Service]
-    ACR -->|image pull| AKS
-    AKS --> LB[Azure Load Balancer<br/>public IP]
+
+    subgraph AZ[Microsoft Azure: rg-cicd-cia2]
+        ACR[(Azure Container<br/>Registry)]
+        AKS[Azure Kubernetes<br/>Service]
+        LB[Azure Load Balancer<br/>public IP]
+        ACR -->|image pull via<br/>managed identity| AKS
+        AKS --> LB
+    end
+
+    S6 --> ACR
+    S7 --> AKS
     LB --> USER[Browser]
 ```
 
 | Layer | Technology |
 |---|---|
-| Source control | Git + GitHub (public repository, webhook trigger) |
+| Source control | Git + GitHub (public repository) |
 | Build & test | Maven 3.9 (wrapper), Java 21, JUnit 5, JaCoCo |
 | Secret scanning | **Gitleaks** — scans full Git history, fails the build on any finding |
-| Static analysis | **SonarQube Cloud** — bugs, vulnerabilities, code smells, coverage, Quality Gate |
-| Containerisation | Docker, multi-stage build, non-root distroless-style Alpine JRE |
+| Static analysis | **SonarQube Cloud** — bugs, vulnerabilities, coverage, Quality Gate |
+| Containerisation | Docker, multi-stage build, non-root Alpine JRE runtime |
 | Registry | Azure Container Registry (ACR) |
 | Orchestration | Azure Kubernetes Service (AKS), 2 replicas, rolling update, HPA |
-| CI/CD engine | Jenkins (declarative `Jenkinsfile`) on an Azure Ubuntu VM |
-| Config management | Ansible — provisions the Jenkins VM and drives the AKS deployment |
+| CI/CD engine | Jenkins (declarative `Jenkinsfile`), local Docker container |
+| Config management | Ansible — drives the AKS deployment; VM playbook kept as the cloud option |
 
 ---
 
@@ -52,20 +63,26 @@ flowchart LR
 ```
 .
 ├── Jenkinsfile                  8-stage declarative CI/CD pipeline
+├── docker-compose.yml           Local Jenkins controller
+├── jenkins/
+│   ├── Dockerfile               Jenkins + docker CLI, az, kubectl, gitleaks, ansible
+│   └── plugins.txt              Plugins pre-installed at image build time
+│
 ├── pom.xml                      Maven build, JaCoCo + Sonar configuration
 ├── mvnw, mvnw.cmd, .mvn/        Maven wrapper (no Maven install needed)
-├── Dockerfile                   Multi-stage image, runs as UID 10001
+├── Dockerfile                   Multi-stage app image, runs as UID 10001
 ├── .dockerignore                Keeps build context small and secret-free
 ├── .gitleaks.toml               Secret-scanning rules + documented allowlist
+├── .gitattributes               Forces LF on scripts so they run on Linux
 ├── .env.example                 Config template (never a real secret)
 │
 ├── src/main/java/com/example/cicd/
 │   ├── CicdDemoApplication.java
-│   ├── config/AppProperties.java     Build metadata injected by the pipeline
-│   ├── controller/HomeController.java        HTML landing page
-│   ├── controller/GreetingApiController.java REST API
-│   ├── model/                                Response records
-│   └── service/                              Business logic
+│   ├── config/AppProperties.java              Build metadata from the pipeline
+│   ├── controller/HomeController.java         HTML landing page
+│   ├── controller/GreetingApiController.java  REST API
+│   ├── model/                                 Response records
+│   └── service/                               Business logic
 ├── src/main/resources/
 │   ├── application.yml          Actuator probes, externalised config
 │   ├── templates/index.html     Page that proves which build is live
@@ -75,16 +92,18 @@ flowchart LR
 ├── k8s/
 │   ├── 00-namespace.yaml  01-configmap.yaml  02-deployment.yaml
 │   ├── 03-service.yaml    04-hpa.yaml
-│   └── render.sh                 Substitutes the build's image tag
+│   └── render.sh                 Substitutes this build's image tag
 │
 ├── ansible/
 │   ├── ansible.cfg  inventory.ini
-│   ├── jenkins-setup.yml         Configuration management: builds the CI server
-│   └── deploy-app.yml            Deployment automation: renders + applies manifests
+│   ├── deploy-app.yml            USED: renders manifests, applies, verifies
+│   └── jenkins-setup.yml         OPTIONAL: provisions a Jenkins VM instead
 │
 ├── infra/
-│   ├── azure-setup.sh            Creates RG, ACR, AKS, VM, service principal
-│   └── azure-teardown.sh         Deletes everything (stops credit burn)
+│   ├── azure-setup.sh            Creates RG, ACR, AKS, service principal
+│   ├── azure-pause.sh            Stops the cluster (~$0.35/day)
+│   ├── azure-resume.sh           Starts it again
+│   └── azure-teardown.sh         Deletes everything
 │
 └── docs/
     ├── SETUP.md                  Step-by-step runbook
@@ -99,17 +118,15 @@ flowchart LR
 Full instructions are in **[docs/SETUP.md](docs/SETUP.md)**. In short:
 
 ```bash
-# 1. Provision Azure (resource group, ACR, AKS, Jenkins VM, service principal)
 bash infra/azure-setup.sh
 ```
 
 ```bash
-# 2. Configure the Jenkins VM with Ansible (from WSL / Linux / macOS)
-cd ansible && ansible-playbook -i inventory.ini jenkins-setup.yml
+docker compose up -d --build
 ```
 
-Then add the four Jenkins credentials, point a Pipeline job at this repository,
-add the GitHub webhook, and push a commit.
+Then open <http://localhost:8080>, add the four credentials, point a Pipeline
+job at this repository, and push a commit.
 
 ### Run the application locally
 
@@ -117,17 +134,17 @@ add the GitHub webhook, and push a commit.
 ./mvnw spring-boot:run
 ```
 
-Then open <http://localhost:8080>.
+Then open <http://localhost:8080> — note this clashes with Jenkins, so stop one
+or the other first.
 
 ```bash
 ./mvnw clean verify
 ```
 
-Runs the 29 unit tests and writes the JaCoCo coverage report to
-`target/site/jacoco/index.html`.
+Runs the 29 unit tests and writes coverage to `target/site/jacoco/index.html`.
 
 ```bash
-docker build -t cicd-demo-app:local . && docker run --rm -p 8080:8080 cicd-demo-app:local
+docker build -t cicd-demo-app:local . && docker run --rm -p 9090:8080 cicd-demo-app:local
 ```
 
 Builds and runs the container image exactly as the pipeline does.
@@ -155,19 +172,33 @@ Edit the release message, commit and push:
 sed -i 's/APP_RELEASE_MESSAGE: .*/APP_RELEASE_MESSAGE: "Release 2 - shipped automatically"/' k8s/01-configmap.yaml && git commit -am "Update release message" && git push
 ```
 
-The webhook fires, Jenkins runs all eight stages, a new image tag
-`<build>-<commit>` appears in ACR, AKS performs a zero-downtime rolling update,
-and the new message plus the new build number are visible in the browser.
+Jenkins picks the push up within about two minutes (SCM polling) and runs all
+eight stages. A new image tag `<build>-<commit>` appears in ACR, AKS performs a
+zero-downtime rolling update, and the new message plus the new build number are
+visible in the browser.
 
 ---
 
 ## Cost control
 
-AKS nodes, the Jenkins VM and the Load Balancer bill per hour against your
-Azure credits. Between demo sessions:
+Only ACR and AKS bill in Azure. Approximate Central India rates:
+
+| State | Cost |
+|---|---|
+| Running (AKS node + Load Balancer + IP + disk + ACR) | ~$0.085/hr ≈ **$2.05/day** |
+| Paused (`azure-pause.sh`) | ~$0.015/hr ≈ **$0.35/day** |
+| Jenkins (local Docker) | $0 |
+
+Between sessions:
 
 ```bash
-az aks stop --resource-group rg-cicd-cia2 --name aks-cicd-cia2 && az vm deallocate --resource-group rg-cicd-cia2 --name vm-jenkins
+bash infra/azure-pause.sh && docker compose stop
+```
+
+Before a session:
+
+```bash
+bash infra/azure-resume.sh && docker compose up -d
 ```
 
 When finished for good:

@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# Local Jenkins controller for the CI/CD pipeline.
+#
+#   docker compose up -d --build     start Jenkins (first build takes ~5 min)
+#   docker compose logs -f jenkins   watch it start
+#   docker compose down              stop it (jenkins_home volume is kept)
+#
+# Jenkins is then at http://localhost:8080
+#
+# Running Jenkins here instead of on an Azure VM removes the VM, its public IP
+# and its managed disk from the Azure bill - roughly 38 USD/month saved - and
+# leaves only ACR and AKS running in the cloud.
+# ---------------------------------------------------------------------------
+services:
+  jenkins:
+    build:
+      context: ./jenkins
+    image: cicd-jenkins:local
+    container_name: cicd-jenkins
+    restart: unless-stopped
+
+    # Runs as root so the container can use the host's Docker socket. On Docker
+    # Desktop the socket is owned by root:root with mode 0660, so the ordinary
+    # "jenkins" user cannot open it. This is acceptable for a local controller
+    # that is not exposed to the internet; it is listed as a known limitation
+    # in docs/REPORT.md section 7.
+    user: root
+
+    ports:
+      - "8080:8080"     # web UI and the /github-webhook/ endpoint
+      - "50000:50000"   # inbound agent port (unused: builds run on the controller)
+
+    volumes:
+      # Jenkins home: jobs, credentials, build history and the ~/.m2 Maven cache.
+      # A named volume means "docker compose down" does not lose the setup.
+      - jenkins_home:/var/jenkins_home
+      # The host's Docker daemon, used by stage 5 to build the application image.
+      # No daemon runs inside this container (no privileged mode, no Docker-in-Docker).
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      TZ: Asia/Kolkata
+      # Give the JVM a sensible cap so Maven builds do not starve the host.
+      JAVA_OPTS: -Xmx1024m -Djava.awt.headless=true
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+volumes:
+  jenkins_home:
+    name: cicd_jenkins_home

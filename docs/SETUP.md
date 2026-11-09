@@ -1,23 +1,34 @@
 # Setup Runbook
 
-Follow these steps in order. Expect about 60–90 minutes end to end, most of it
-waiting for Azure to create the AKS cluster.
+Follow these steps in order. Expect about 45–60 minutes, most of it waiting for
+Azure to create the AKS cluster and for the Jenkins image to build.
+
+Jenkins runs **locally in Docker**; Azure hosts only the container registry and
+the Kubernetes cluster.
 
 ---
 
-## 0. Prerequisites on your laptop
+## 0. Prerequisites
 
 | Tool | Check | Install on Windows |
 |---|---|---|
 | Git | `git --version` | already installed |
-| Java 21 | `java -version` | already installed |
-| Docker Desktop | `docker info` | already installed — **start it** |
-| kubectl | `kubectl version --client` | already installed |
-| Azure CLI | `az version` | `winget install Microsoft.AzureCLI` |
-| GitHub CLI | `gh --version` | `winget install GitHub.cli` |
-| Ansible | `ansible --version` | runs in WSL — see step 3 |
+| Docker Desktop | `docker info` | already installed — **it must be running** |
+| Azure CLI | `az version` | already installed |
+| GitHub CLI | `gh --version` | already installed |
+| Java 21 | `java -version` | already installed (only needed to run the app outside Docker) |
+| kubectl | `kubectl version --client` | already installed (optional — the Jenkins image has its own) |
 
 Maven is **not** required: the repository ships the Maven wrapper (`./mvnw`).
+Ansible is **not** required on your machine: it is built into the Jenkins image.
+
+> **Docker Desktop must use the WSL 2 backend** (Settings → General → "Use the
+> WSL 2 based engine"). The Jenkins container mounts the host Docker socket to
+> build the application image, which needs that backend.
+
+> **Port 8080** is used by Jenkins. The Spring Boot app also defaults to 8080,
+> so don't run `./mvnw spring-boot:run` at the same time — or run the app on a
+> different port with `./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=9090`.
 
 ---
 
@@ -31,8 +42,8 @@ gh auth login
 cd /c/Users/mmani/Downloads/CICD && gh repo create cicd-azure-cia2 --public --source=. --remote=origin --push
 ```
 
-The repository must be **public** so that SonarQube Cloud analysis is free and
-your instructor can access it.
+The repository must be **public** so SonarQube Cloud analysis is free and your
+instructor can access it.
 
 ---
 
@@ -55,14 +66,14 @@ This creates:
 | Resource | Name | Notes |
 |---|---|---|
 | Resource group | `rg-cicd-cia2` | everything lives here |
-| Container registry | `acrcicdcia2` | Basic SKU |
-| AKS cluster | `aks-cicd-cia2` | 1 × `Standard_B2s`, free control plane, `AcrPull` granted |
-| Jenkins VM | `vm-jenkins` | Ubuntu 24.04, `Standard_B2s`, port 8080 open |
+| Container registry | `acrcicdcia2` | Basic SKU, ~$5/month |
+| AKS cluster | `aks-cicd-cia2` | 1 × `Standard_B2s`, free control plane, 32 GB disk, `AcrPull` granted |
 | Service principal | `sp-cicd-cia2` | `Contributor` on the group, `AcrPush`, AKS Cluster Admin |
 
-> **ACR names are globally unique.** If `acrcicdcia2` is taken, rerun with
-> `ACR_NAME=acrcicdcia2<yourinitials> bash infra/azure-setup.sh` and update the
-> same value in `Jenkinsfile` and `ansible/deploy-app.yml`.
+> **ACR names are globally unique.** If `acrcicdcia2` is taken the script stops
+> and tells you to rerun as `ACR_NAME=acrcicdcia2ss bash infra/azure-setup.sh`.
+> If you change it, update `ACR_NAME` and `ACR_LOGIN_SERVER` in `Jenkinsfile`
+> and `acr_login_server` in `ansible/deploy-app.yml`.
 
 **Copy the service principal `appId`, `password` and `tenant` from the output
 now** — the password is shown only once. Do not paste them into any file in the
@@ -70,42 +81,35 @@ repository; Gitleaks will fail the build.
 
 ---
 
-## 3. Configure the Jenkins VM with Ansible
-
-Ansible does not run natively on Windows, so use WSL:
+## 3. Start Jenkins locally
 
 ```bash
-wsl --install -d Ubuntu
+docker compose up -d --build
 ```
 
-Inside WSL:
+The first build takes about five minutes: it installs the Docker CLI, Azure
+CLI, kubectl, Gitleaks and Ansible into the Jenkins image, and pre-installs the
+plugins listed in `jenkins/plugins.txt` — so there is no plugin wizard to click
+through.
 
 ```bash
-sudo apt update && sudo apt install -y ansible openssh-client
+docker compose logs -f jenkins
 ```
 
-Copy the SSH key Azure generated, put the VM's public IP into the inventory,
-and run the playbook:
+Watch for `Jenkins is fully up and running`, then get the unlock password:
 
 ```bash
-cp -r /mnt/c/Users/$USER/.ssh ~/ && chmod 600 ~/.ssh/id_rsa
+docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
+
+Open <http://localhost:8080>, paste the password, choose **Select plugins to
+install → None** (they are already installed), and create your admin user.
+
+Confirm the toolchain that was baked into the image:
 
 ```bash
-cd /mnt/c/Users/mmani/Downloads/CICD/ansible && sed -i "s/VM_PUBLIC_IP/<your-vm-public-ip>/" inventory.ini
+docker compose exec jenkins cat /usr/local/share/toolchain.txt
 ```
-
-```bash
-ansible-playbook -i inventory.ini jenkins-setup.yml
-```
-
-The playbook installs Java 21, Jenkins, Docker, kubectl, Azure CLI, Gitleaks
-and Ansible, adds the `jenkins` user to the `docker` group, and prints the
-Jenkins initial admin password.
-
-> **Alternative without WSL:** SSH to the VM, `sudo apt install -y ansible git`,
-> clone this repository there, then
-> `ansible-playbook -i "localhost," -c local ansible/jenkins-setup.yml`.
 
 ---
 
@@ -113,8 +117,8 @@ Jenkins initial admin password.
 
 1. Go to <https://sonarcloud.io> and sign in **with GitHub**.
 2. Create an organisation (free plan) and import the `cicd-azure-cia2` repository.
-3. Choose **"With Jenkins"** as the analysis method, which disables SonarCloud's
-   own automatic analysis — required, otherwise the pipeline's analysis is rejected.
+3. Choose **"With Jenkins"** as the analysis method. This disables SonarCloud's
+   Automatic Analysis — required, otherwise the pipeline's analysis is rejected.
 4. Note your **organisation key** and **project key**.
 5. Create a token: avatar → **My Account → Security → Generate Token**.
 
@@ -125,56 +129,68 @@ SONAR_ORG         = 'your-org-key'
 SONAR_PROJECT_KEY = 'your-org-key_cicd-azure-cia2'
 ```
 
-The same keys also appear in `pom.xml` as defaults; the pipeline overrides them
-on the command line, so editing the `Jenkinsfile` is sufficient.
+Commit and push that change — the pipeline reads the `Jenkinsfile` from Git.
 
 ---
 
 ## 5. Configure Jenkins
 
-Open `http://<vm-public-ip>:8080`.
+**Manage Jenkins → Credentials → System → Global credentials** — add four:
 
-1. Unlock with the initial admin password, choose **Install suggested plugins**,
-   and create your admin user.
-2. **Manage Jenkins → Plugins → Available** — install, then restart:
-   - *Pipeline*, *Git*, *GitHub*, *Credentials Binding*, *JUnit*, *Timestamper*
-3. **Manage Jenkins → Credentials → System → Global credentials** — add:
+| ID | Kind | Value |
+|---|---|---|
+| `azure-sp` | Username with password | username = SP `appId`, password = SP `password` |
+| `azure-tenant-id` | Secret text | the `tenant` GUID |
+| `azure-subscription-id` | Secret text | `az account show --query id -o tsv` |
+| `sonarcloud-token` | Secret text | the SonarCloud token from step 4 |
 
-   | ID | Kind | Value |
-   |---|---|---|
-   | `azure-sp` | Username with password | username = SP `appId`, password = SP `password` |
-   | `azure-tenant-id` | Secret text | the `tenant` GUID |
-   | `azure-subscription-id` | Secret text | `az account show --query id -o tsv` |
-   | `sonarcloud-token` | Secret text | the SonarCloud token from step 4 |
+The IDs must match exactly — the `Jenkinsfile` looks them up by ID.
 
-   The IDs must match exactly — the `Jenkinsfile` looks them up by ID.
+**New Item → Pipeline**, name it `cicd-demo-app`:
 
-4. **New Item → Pipeline**, name it `cicd-demo-app`:
-   - Build Triggers → tick **GitHub hook trigger for GITScm polling**
-   - Pipeline → **Pipeline script from SCM** → SCM **Git**
-   - Repository URL: `https://github.com/<you>/cicd-azure-cia2.git`
-   - Branch: `*/main`, Script Path: `Jenkinsfile`
-   - Save.
+- Build Triggers → tick **Poll SCM** (the schedule comes from the `Jenkinsfile`)
+- Pipeline → **Pipeline script from SCM** → SCM **Git**
+- Repository URL: `https://github.com/<you>/cicd-azure-cia2.git`
+- Branch: `*/main`, Script Path: `Jenkinsfile`
+- Save.
 
 ---
 
-## 6. Add the GitHub webhook
+## 6. Automatic triggering
 
-In the GitHub repository: **Settings → Webhooks → Add webhook**
+**Default — SCM polling (no setup).** The `Jenkinsfile` declares
+`pollSCM('H/2 * * * *')`, so Jenkins checks GitHub every two minutes and starts
+a build by itself when it sees a new commit. No inbound network access is
+needed, which is what makes a local controller viable. This satisfies "the
+pipeline runs automatically" — nobody clicks Build.
 
-- Payload URL: `http://<vm-public-ip>:8080/github-webhook/`
+**Optional — a real webhook.** GitHub cannot reach `localhost`, so expose
+Jenkins through a free tunnel if you want instant triggering and a GitHub
+"Recent Deliveries" screenshot:
+
+```bash
+winget install Cloudflare.cloudflared
+```
+
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+That prints a public `https://<random>.trycloudflare.com` URL. In the GitHub
+repository: **Settings → Webhooks → Add webhook**
+
+- Payload URL: `https://<random>.trycloudflare.com/github-webhook/`
 - Content type: `application/json`
 - Event: *Just the push event*
 
-A green tick under **Recent Deliveries** confirms it works. The pipeline also
-polls SCM every five minutes as a fallback.
+The URL changes each time you restart the tunnel, so update the webhook then.
 
 ---
 
 ## 7. Run the pipeline
 
-Click **Build Now** for the first run, then push a commit to see the webhook
-trigger it automatically.
+Click **Build Now** for the first run, then push a commit to see polling
+trigger it on its own.
 
 Expected stage outcomes:
 
@@ -207,27 +223,39 @@ sed -i 's/APP_RELEASE_MESSAGE: .*/APP_RELEASE_MESSAGE: "Release 2 - shipped auto
 git commit -am "Demo: change the release message" && git push
 ```
 
-Watch the build start by itself, then refresh the browser: the message and the
-build number change while the service stays up, because the deployment uses
-`maxUnavailable: 0`.
+Within two minutes the build starts by itself. Then refresh the browser: the
+message and the build number change while the service stays up, because the
+deployment uses `maxUnavailable: 0`.
 
 ---
 
 ## 9. Collect the screenshots
 
-Save these into `docs/screenshots/` — see that folder's README for the list.
+Save them into `docs/screenshots/` — see that folder's README for the list.
 
 ---
 
-## 10. Shut down to protect your credits
+## 10. Protect your credits
+
+Between sessions:
 
 ```bash
-az aks stop --resource-group rg-cicd-cia2 --name aks-cicd-cia2 && az vm deallocate --resource-group rg-cicd-cia2 --name vm-jenkins
+bash infra/azure-pause.sh && docker compose stop
 ```
+
+Before the next session:
+
+```bash
+bash infra/azure-resume.sh && docker compose up -d
+```
+
+When the assignment is finished:
 
 ```bash
 bash infra/azure-teardown.sh
 ```
+
+Running ≈ $2.05/day, paused ≈ $0.35/day, Jenkins ≈ $0.
 
 ---
 
@@ -235,11 +263,16 @@ bash infra/azure-teardown.sh
 
 | Symptom | Cause and fix |
 |---|---|
-| `docker: permission denied` in stage 5 | The `jenkins` user was added to `docker` but Jenkins was not restarted: `sudo systemctl restart jenkins`. |
+| `docker: command not found` or `Cannot connect to the Docker daemon` in stage 5 | Docker Desktop is not running, or it is not using the WSL 2 backend, so the mounted socket is dead. Start Docker Desktop and `docker compose restart jenkins`. |
+| `permission denied while trying to connect to the Docker daemon socket` | The container is not running as root. Check `user: root` is still in `docker-compose.yml`, then `docker compose up -d --force-recreate`. |
 | Stage 4 fails with *"Project was already analysed by SonarCloud Automatic Analysis"* | Turn off Automatic Analysis in the SonarCloud project's **Administration → Analysis Method**. |
 | Stage 6 `unauthorized: authentication required` | The service principal lacks `AcrPush`, or `ACR_NAME` in the `Jenkinsfile` does not match the real registry. |
 | Stage 7 `az aks get-credentials` forbidden | The SP needs the *Azure Kubernetes Service Cluster Admin Role*; `azure-setup.sh` grants it. |
 | Pods stuck `ImagePullBackOff` | AKS was not attached to ACR: `az aks update -g rg-cicd-cia2 -n aks-cicd-cia2 --attach-acr acrcicdcia2`. |
 | Service `EXTERNAL-IP` stays `<pending>` | Azure takes 2–5 minutes to create the Load Balancer; the pipeline waits up to 5 minutes. |
-| Pods `Pending` with *Insufficient cpu* | One `B2s` node cannot host 2 replicas plus system pods: `az aks scale -g rg-cicd-cia2 -n aks-cicd-cia2 --node-count 2`. |
-| Webhook never fires | NSG port 8080 closed, or the payload URL is missing the trailing slash in `/github-webhook/`. |
+| Pods `Pending` with *Insufficient cpu* | One `B2s` node cannot host 2 replicas plus system pods: `az aks scale -g rg-cicd-cia2 -n aks-cicd-cia2 --node-count 2` (doubles the node cost). |
+| Push does not trigger a build | Polling runs every two minutes — wait, or click **Build Now**. Check the job's *Git Polling Log* for errors. |
+| Webhook delivery fails | The `trycloudflare.com` URL changes on every tunnel restart; update the webhook's Payload URL. |
+| Jenkins is slow or the build OOMs | Raise the container's memory in Docker Desktop (Settings → Resources) and `JAVA_OPTS` in `docker-compose.yml`. |
+| Port 8080 already in use | Something else holds it — often a local `spring-boot:run`. Stop it, or change the published port in `docker-compose.yml`. |
+| `bash: ./mvnw: /bin/sh^M: bad interpreter` | Line endings. `.gitattributes` forces LF; re-clone, or run `git add --renormalize .`. |

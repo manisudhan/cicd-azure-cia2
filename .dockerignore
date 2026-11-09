@@ -12,6 +12,8 @@ k8s/
 ansible/
 infra/
 docs/
+jenkins/
+docker-compose.yml
 *.md
 !README.md
 Jenkinsfile

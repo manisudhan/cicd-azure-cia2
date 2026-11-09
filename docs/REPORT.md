@@ -6,7 +6,7 @@
 |---|---|
 | Student | *<your name and registration number>* |
 | Cloud provider | Microsoft Azure |
-| CI/CD platform | Jenkins (declarative pipeline) on an Azure Ubuntu VM |
+| CI/CD platform | Jenkins (declarative pipeline) in a local Docker container |
 | Repository | `https://github.com/<you>/cicd-azure-cia2` |
 | Live endpoint | `http://<loadbalancer-public-ip>` |
 | Date | *<submission date>* |
@@ -45,9 +45,9 @@ pipeline that ships defects or leaked credentials faster is not an improvement:
 ### 1.1 Architecture
 
 ```
-  ┌───────────┐   git push    ┌──────────────────┐   webhook   ┌─────────────────────────┐
-  │ Developer │──────────────▶│ GitHub           │────────────▶│ Jenkins (Azure VM)      │
-  └───────────┘               │ public repository│             │ Ubuntu 24.04, B2s       │
+  ┌───────────┐   git push    ┌──────────────────┐  SCM poll   ┌─────────────────────────┐
+  │ Developer │──────────────▶│ GitHub           │◀────────────│ Jenkins (local Docker)  │
+  └───────────┘               │ public repository│  every 2min │ jenkins/Dockerfile      │
                              └──────────────────┘             └───────────┬─────────────┘
                                                                           │
                      ┌────────────────────────────────────────────────────┘
@@ -78,9 +78,20 @@ pipeline that ships defects or leaked credentials faster is not an improvement:
                                                               Browser
 ```
 
-Trust boundaries: GitHub and SonarQube Cloud are external SaaS; the Jenkins VM,
-ACR and AKS sit inside one Azure resource group; Jenkins authenticates to Azure
-with a service principal scoped to that resource group only.
+Trust boundaries: GitHub and SonarQube Cloud are external SaaS; ACR and AKS sit
+inside one Azure resource group; Jenkins runs on the developer's own machine and
+authenticates to Azure with a service principal scoped to that resource group
+only.
+
+**Why Jenkins runs locally.** A cloud-hosted Jenkins VM was designed first
+(`ansible/jenkins-setup.yml` still provisions one), but it accounted for roughly
+half the running cost — the `B2s` VM, a second static public IP and a second
+managed OS disk, about US$38/month — for a controller that is only needed while
+someone is actively working. Moving it into a local Docker container
+(`docker-compose.yml` + `jenkins/Dockerfile`) removed that cost entirely and cut
+the Azure bill from about US$4.50/day to about US$2.05/day, with no loss of
+pipeline function. The trade-off is that GitHub cannot reach `localhost`, so the
+automatic trigger is SCM polling rather than a webhook; section 6 discusses this.
 
 ---
 
@@ -98,15 +109,19 @@ with a service principal scoped to that resource group only.
 | Containerisation | **Docker, multi-stage** | The build stage carries the JDK and Maven; the runtime stage carries only a JRE, so the published image is ~190 MB instead of ~600 MB and has a much smaller CVE surface. |
 | Registry | **Azure Container Registry** | Native to Azure; AKS authenticates to it with its managed identity, so no registry password is ever stored in Kubernetes or in Jenkins. |
 | Orchestration | **Azure Kubernetes Service** | Managed control plane (free tier), integrated Load Balancer for the public endpoint, built-in `metrics-server` for the HPA, and declarative rolling updates. |
-| CI/CD engine | **Jenkins** | Chosen over GitHub Actions deliberately: it demonstrates the full DevOps stack — a build server that must itself be provisioned and configured, which is what makes the Ansible deliverable meaningful rather than decorative. The `Jenkinsfile` lives in the repository, so the pipeline is version-controlled alongside the code. |
-| Configuration management | **Ansible** | Two genuine uses: `jenkins-setup.yml` turns a bare Ubuntu VM into the build server idempotently, and `deploy-app.yml` performs the Kubernetes rollout from the pipeline. Agentless — only SSH is needed. |
+| CI/CD engine | **Jenkins**, in a local Docker container | Chosen over GitHub Actions deliberately: a self-hosted controller shows the whole DevOps stack rather than hiding it behind a managed runner, and the `Jenkinsfile` is version-controlled alongside the code. Running it in Docker rather than on an Azure VM removes about US$38/month of cloud cost while keeping the controller reproducible — `jenkins/Dockerfile` bakes in the Docker CLI, Azure CLI, kubectl, Gitleaks and Ansible, and `jenkins/plugins.txt` pre-installs the plugins, so the agent is defined as code with nothing installed by hand. |
+| Configuration management | **Ansible** | `deploy-app.yml` performs the Kubernetes rollout from stage 7 of the pipeline — it renders the manifests for the build, applies them, waits for the rollout and reports the endpoint. `jenkins-setup.yml` is retained for the alternative topology, provisioning an equivalent Jenkins host on an Azure VM. Agentless, and for the deployment case it needs no SSH at all. |
 
 ### 2.1 Alternatives considered
 
-- **GitHub Actions** would have been faster to set up and needs no VM, but it
-  hides the build infrastructure, leaving no real role for Ansible.
+- **GitHub Actions** would have been faster to set up and needs no controller at
+  all, but it hides the build infrastructure, leaving no real role for Ansible.
 - **Azure DevOps Pipelines** is Azure-native, but its free tier requires a
   parallelism grant that can take several days to approve.
+- **Jenkins on an Azure VM** was the original design and is still supported by
+  `ansible/jenkins-setup.yml`. It buys a public webhook endpoint for about
+  US$38/month; SCM polling achieves automatic triggering for nothing, so the
+  local container won.
 - **Helm** would template the manifests more powerfully than `envsubst`, but it
   adds a release lifecycle to explain for a five-file deployment.
 - **Self-hosted SonarQube** gives full control, but needs ~3 GB RAM and its own
@@ -157,14 +172,44 @@ single command and cost is easy to attribute.
 |---|---|---|---|
 | Resource group | `rg-cicd-cia2` | — | Blast radius and cost boundary |
 | Container registry | `acrcicdcia2` | Basic | Stores the tagged images |
-| Kubernetes service | `aks-cicd-cia2` | Free tier control plane, 1 × `Standard_B2s` | Runs the workload |
-| Virtual machine | `vm-jenkins` | `Standard_B2s`, Ubuntu 24.04 | Jenkins controller and build agent |
+| Kubernetes service | `aks-cicd-cia2` | Free tier control plane, 1 × `Standard_B2s`, 32 GB disk | Runs the workload |
 | Load Balancer + public IP | created by the `Service` | Standard | Public application endpoint |
 | Service principal | `sp-cicd-cia2` | — | Jenkins identity in Azure |
 
+The Jenkins controller is deliberately **not** an Azure resource: it runs in a
+local Docker container, so no VM, second public IP or second managed disk is
+billed.
+
 `infra/azure-setup.sh` creates all of it, including
 `az aks create --attach-acr`, which grants the cluster's managed identity
-`AcrPull` so no image-pull secret is needed anywhere.
+`AcrPull` so no image-pull secret is needed anywhere. The node OS disk is
+explicitly created at 32 GB rather than accepting the 128 GB Premium SSD
+default, because that disk is billed continuously — including while the cluster
+is stopped — and 128 GB of Premium SSD costs roughly US$20/month for storage the
+workload never uses.
+
+### 4.4 Cost model
+
+Approximate Central India pay-as-you-go rates (November 2026):
+
+| Component | Rate | Monthly if left running |
+|---|---|---|
+| AKS control plane (free tier) | $0 | $0 |
+| 1 × `Standard_B2s` node | $0.0448/hr | $32.70 |
+| Standard Load Balancer, 1 rule | $0.025/hr | $18.25 |
+| 1 × static public IP | $0.005/hr | $3.65 |
+| 32 GB StandardSSD node disk | ~$0.003/hr | ~$2.40 |
+| ACR Basic | ~$0.007/hr | ~$5.00 |
+| Jenkins (local Docker) | $0 | $0 |
+| **Total while running** | **~$0.085/hr** | **~$62/month** |
+| **Total while paused** (`azure-pause.sh`) | **~$0.015/hr** | **~$11/month** |
+
+Cost management is therefore an explicit part of the design rather than an
+afterthought: `infra/azure-pause.sh` stops the cluster between work sessions,
+`azure-resume.sh` brings it back, and `azure-teardown.sh` deletes the resource
+group entirely. Running the pipeline for the ~20 hours needed to build, demo and
+capture evidence, with the cluster paused the rest of the time, costs roughly
+US$10 of a US$100 student credit.
 
 ### 4.2 Kubernetes deployment design
 
@@ -244,7 +289,7 @@ Place these in `docs/screenshots/` and reference them here:
 | 7 | Jenkins console log, Gitleaks stage | Secret scan passed |
 | 8 | SonarCloud dashboard, Quality Gate **Passed** | Static analysis gate |
 | 9 | Jenkins test result trend | 29 tests passing |
-| 10 | GitHub webhook **Recent Deliveries** (green tick) | Automatic trigger |
+| 10 | Jenkins **Git Polling Log** showing the change was detected (or GitHub **Recent Deliveries** if the tunnel was used) | Automatic trigger, no manual build |
 | 11 | Build *N* page, then build *N+1* auto-triggered by the push | Change demonstration |
 | 12 | Browser before and after, showing the changed message and build number | Change visible at the endpoint |
 
@@ -270,12 +315,15 @@ Place these in `docs/screenshots/` and reference them here:
 | 2 | `kubectl apply` reported "unchanged" and no new code was deployed. | The manifest referenced a mutable `latest` tag, so the pod template was byte-identical. | Tagged every image `<build-number>-<commit-sha>` and templated the tag into the manifest, guaranteeing a changed pod spec per build. |
 | 3 | A green pipeline did not prove the application worked — `kubectl apply` succeeds even if the pods then crash-loop. | The pipeline verified the API call, not the outcome. | Added stage 8: `rollout status`, then a smoke test that asserts the live `/api/v1/info` reports *this* build's image tag. |
 | 4 | `readOnlyRootFilesystem: true` made the container fail at startup. | Embedded Tomcat needs a writable temp directory. | Mounted an `emptyDir` volume at `/tmp`, keeping the rest of the filesystem read-only. |
-| 5 | Ansible does not run natively on Windows. | No Windows control node support. | Ran the control node in **WSL Ubuntu**, and documented an alternative that executes the playbook on the VM with `-c local`. |
-| 6 | Jenkins could not run `docker build` even though the `jenkins` user was in the `docker` group. | Group membership is read at process start. | Added an Ansible handler that restarts Jenkins whenever the user's groups change. |
+| 5 | Ansible does not run natively on Windows, but the pipeline needs it. | No Windows control node support. | Installed Ansible **inside the Jenkins image**, which is Debian-based. The playbook therefore runs on a Linux control node without the developer needing WSL at all, and the control node is defined as code in `jenkins/Dockerfile`. |
+| 6 | The Jenkins container could not run `docker build` — `permission denied on /var/run/docker.sock`. | Docker Desktop exposes the socket as `root:root` mode 0660, and the image's `jenkins` user is neither. | Ran the container as `user: root` in `docker-compose.yml`. The container mounts the host socket rather than running its own daemon, so no privileged Docker-in-Docker is involved — but root is still a real trade-off, recorded as limitation 3 in section 7. |
 | 7 | SonarQube Cloud rejected the pipeline's analysis. | The project defaulted to SonarCloud *Automatic Analysis*, which is mutually exclusive with CI-based analysis. | Switched the analysis method to "With Jenkins"; documented in the troubleshooting table. |
 | 8 | Gitleaks flagged its own rule file and the test fixtures. | The config contains the detection patterns; tests use a fixed dummy SHA. | Added a **narrow, documented allowlist** (this file, the Maven wrapper, build output, screenshots, and obvious placeholder patterns) rather than lowering the rules. |
 | 9 | Two replicas would not schedule on a single `Standard_B2s` node. | System pods plus 2 × 150 m CPU requests exceed 2 vCPU in some configurations. | Tuned requests down to 150 m CPU / 320 Mi, and documented `az aks scale --node-count 2` as the fix. |
 | 10 | The service principal could not fetch cluster credentials. | `Contributor` does not include `listClusterAdminCredential`. | Granted the *Azure Kubernetes Service Cluster Admin Role* explicitly, scoped to the cluster only. |
+| 11 | The first cost estimate was far too low — the real 24/7 rate was about US$4.50/day, enough to exhaust a US$100 credit in three weeks. | The hourly VM rates are the visible cost; the Load Balancer and especially the **default 128 GB Premium SSD disks** were not, and disks bill even while compute is stopped. | Moved Jenkins off Azure entirely (−US$38/month), set the node disk to 32 GB StandardSSD (−US$17/month), and added `azure-pause.sh` / `azure-resume.sh`. Running cost fell to ~US$2.05/day and idle cost to ~US$0.35/day. |
+| 12 | With Jenkins on `localhost`, GitHub webhooks cannot reach it, so the "builds trigger automatically" requirement looked unachievable. | Inbound connections to a laptop are not routable. | Made `pollSCM('H/2 * * * *')` the primary trigger: Jenkins polls GitHub outbound and starts a build within two minutes of a push, with nobody clicking Build. A Cloudflare quick tunnel is documented as an optional upgrade when an instant webhook and a GitHub delivery screenshot are wanted. |
+| 13 | Shell scripts and `mvnw` failed on the Linux build agent with `bad interpreter: No such file or directory`. | Git on Windows checks files out with CRLF line endings by default. | Added `.gitattributes` forcing `eol=lf` for `*.sh`, `mvnw`, the `Jenkinsfile` and all YAML, so the scripts are valid on Linux regardless of the developer's platform. |
 
 ---
 
@@ -313,16 +361,17 @@ Place these in `docs/screenshots/` and reference them here:
 
 | # | Limitation | Risk | Production remedy |
 |---|---|---|---|
-| 1 | Jenkins is served over **HTTP on port 8080** with a public IP. | Credentials and webhook payloads travel in clear text. | Terminate TLS on an Azure Application Gateway or nginx with a Let's Encrypt certificate; restrict the NSG to known source IPs. |
+| 1 | Jenkins is served over **plain HTTP on `localhost:8080`**, with no TLS and a single local admin account. | Low exposure while it stays on the loopback interface, but anything running on the developer's machine can reach it, and the optional Cloudflare tunnel publishes it to the internet for as long as the tunnel is open. | Terminate TLS in front of Jenkins, use an identity provider instead of a local account, and treat the tunnel as temporary — close it after the demo rather than leaving it running. |
 | 2 | The application endpoint is **HTTP only**. | No transport encryption. | Add an ingress controller with TLS, or Azure Front Door. |
-| 3 | A **long-lived service principal secret** is stored in Jenkins. | A stolen secret is valid until manually rotated. | Use a VM **managed identity** or OIDC workload-identity federation — no stored secret at all. |
-| 4 | AKS uses **`--admin` (local account) credentials**. | Certificate-based cluster-admin bypasses Entra ID RBAC. | Disable local accounts, enable Entra ID integration with `kubelogin`, and bind the pipeline identity to a narrow `Role` instead of cluster-admin. |
-| 5 | **No container image vulnerability scan.** | A base-image CVE could ship undetected. | Add a Trivy or `az acr` scan stage that fails on HIGH/CRITICAL findings. |
-| 6 | **No image signing or SBOM.** | Image provenance cannot be cryptographically verified. | Sign with Cosign and generate a Syft SBOM, enforced by an admission policy. |
-| 7 | **Single-node cluster, single Jenkins host.** | No high availability; the node or the VM is a single point of failure. | Multi-node pool across availability zones; Jenkins controller with agents, or a managed CI service. |
-| 8 | **No network policies**; pods can talk to anything. | Lateral movement after a compromise. | Enable Azure or Calico network policy with default-deny egress. |
-| 9 | **No staging environment or approval gate** — `main` goes straight to the single environment. | A bad change reaches the only running instance. | Separate dev/staging/production namespaces or clusters with a manual approval before production. |
-| 10 | Secrets would sit in **Kubernetes Secrets** (base64, not encrypted) if the app needed any. | Readable by anyone with namespace read access. | Azure Key Vault with the Secrets Store CSI driver and workload identity. |
+| 3 | The Jenkins container runs as **root** and mounts the host **Docker socket**. | Root on the socket is equivalent to root on the host: anything that can run a pipeline step can start a privileged container on the developer's machine. | Run the controller as a non-root user whose GID matches the socket, or move image building to a rootless builder such as BuildKit in rootless mode, Buildah or `az acr build` (which builds server-side in Azure and needs no local daemon at all). |
+| 4 | A **long-lived service principal secret** is stored in Jenkins. | A stolen secret stays valid until manually rotated. | Use OIDC workload-identity federation so no secret is stored, or keep the secret in Azure Key Vault with automatic rotation and a short lifetime. |
+| 5 | AKS uses **`--admin` (local account) credentials**. | Certificate-based cluster-admin bypasses Entra ID RBAC. | Disable local accounts, enable Entra ID integration with `kubelogin`, and bind the pipeline identity to a narrow `Role` instead of cluster-admin. |
+| 6 | **No container image vulnerability scan.** | A base-image CVE could ship undetected. | Add a Trivy or `az acr` scan stage that fails on HIGH/CRITICAL findings. |
+| 7 | **No image signing or SBOM.** | Image provenance cannot be cryptographically verified. | Sign with Cosign and generate a Syft SBOM, enforced by an admission policy. |
+| 8 | **Single-node cluster, single Jenkins host.** | No high availability: the AKS node is a single point of failure, and the Jenkins controller lives on one laptop with its history in one Docker volume. | Multi-node pool across availability zones; Jenkins controller with agents, or a managed CI service. |
+| 9 | **No network policies**; pods can talk to anything. | Lateral movement after a compromise. | Enable Azure or Calico network policy with default-deny egress. |
+| 10 | **No staging environment or approval gate** — `main` goes straight to the single environment. | A bad change reaches the only running instance. | Separate dev/staging/production namespaces or clusters with a manual approval before production. |
+| 11 | Secrets would sit in **Kubernetes Secrets** (base64, not encrypted) if the app needed any. | Readable by anyone with namespace read access. | Azure Key Vault with the Secrets Store CSI driver and workload identity. |
 
 ---
 
@@ -354,19 +403,25 @@ is what makes a green build trustworthy.
 | File | Purpose |
 |---|---|
 | `Jenkinsfile` | The 8-stage declarative pipeline |
+| `docker-compose.yml` | Runs the Jenkins controller locally |
+| `jenkins/Dockerfile` | Jenkins image with docker CLI, az, kubectl, gitleaks, ansible |
+| `jenkins/plugins.txt` | Plugins pre-installed at image build time |
 | `pom.xml` | Maven build, JaCoCo, SonarQube configuration |
-| `Dockerfile` | Multi-stage image, non-root runtime |
+| `Dockerfile` | Multi-stage application image, non-root runtime |
 | `.gitleaks.toml` | Secret-scanning rules and documented allowlist |
+| `.gitattributes` | Forces LF endings so scripts run on Linux |
 | `k8s/*.yaml`, `k8s/render.sh` | Kubernetes manifests and the renderer |
-| `ansible/jenkins-setup.yml` | Provisions the Jenkins VM (configuration management) |
 | `ansible/deploy-app.yml` | Renders and applies the manifests (deployment automation) |
-| `infra/azure-setup.sh` | Creates every Azure resource |
-| `infra/azure-teardown.sh` | Deletes them again |
+| `ansible/jenkins-setup.yml` | Optional: provisions an Azure VM Jenkins instead |
+| `infra/azure-setup.sh` | Creates the resource group, ACR, AKS and service principal |
+| `infra/azure-pause.sh`, `azure-resume.sh` | Stop and start the cluster for cost control |
+| `infra/azure-teardown.sh` | Deletes everything |
 | `docs/SETUP.md` | Step-by-step runbook with troubleshooting |
 
 ## Appendix B — Commands used in the viva
 
 ```bash
+docker compose exec jenkins cat /usr/local/share/toolchain.txt   # prove the agent's toolchain
 kubectl -n cicd-demo get deployment,pods,svc -o wide
 kubectl -n cicd-demo rollout history deployment/cicd-demo-app
 kubectl -n cicd-demo describe pod -l app.kubernetes.io/name=cicd-demo-app | head -40

@@ -55,9 +55,13 @@ spec:
             - configMapRef:
                 name: cicd-demo-app-config
           resources:
+            # Deliberately modest. The scheduler reserves "requests" on the node,
+            # and one Standard_B2s has only 1900m allocatable CPU with the AKS
+            # system pods already taking ~1350m. At 150m per pod a 4th replica
+            # would not fit and would sit Pending; at 100m there is room for five.
             requests:
-              cpu: "150m"
-              memory: "320Mi"
+              cpu: "100m"
+              memory: "256Mi"
             limits:
               cpu: "500m"
               memory: "640Mi"

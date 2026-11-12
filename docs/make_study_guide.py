@@ -152,7 +152,7 @@ F.append(Spacer(1, 14 * mm))
 mk(F, [("table", [
     ["Item", "Value"],
     ["Repository", "github.com/manisudhan/cicd-azure-cia2"],
-    ["Live endpoint", "http://20.219.204.192"],
+    ["Live endpoint", "http://cicd-demo-cia2.centralindia.cloudapp.azure.com"],
     ["SonarCloud project", "manisudhan_cicd-azure-cia2"],
     ["Azure resource group", "rg-cicd-cia2 (centralindia)"],
     ["Container registry", "acrcicdcia2.azurecr.io"],

@@ -7,6 +7,13 @@ metadata:
   namespace: cicd-demo
   labels:
     app.kubernetes.io/name: cicd-demo-app
+  annotations:
+    # Asks Azure to attach a DNS label to the public IP it creates for this
+    # Service, giving a stable hostname instead of a bare IP:
+    #   cicd-demo-cia2.centralindia.cloudapp.azure.com
+    # The label must be unique within the region. The name follows the public IP
+    # resource, so it keeps working if the address itself ever changes.
+    service.beta.kubernetes.io/azure-dns-label-name: cicd-demo-cia2
 spec:
   type: LoadBalancer
   selector:

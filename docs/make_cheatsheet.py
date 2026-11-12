@@ -171,7 +171,7 @@ kubectl -n cicd-demo rollout undo deployment/cicd-demo-app
     ("h1", "6. Where everything lives"),
     ("table", [
         ["Thing", "Where"],
-        ["The running app", "http://20.219.204.192"],
+        ["The running app", "http://cicd-demo-cia2.centralindia.cloudapp.azure.com"],
         ["Jenkins", "http://localhost:8090 (user admin)"],
         ["Pods in the portal", "aks-cicd-cia2 &rarr; Kubernetes resources &rarr; Workloads &rarr; namespace cicd-demo"],
         ["Run kubectl in the portal", "aks-cicd-cia2 &rarr; Run command (left menu, under Settings)"],
@@ -197,7 +197,7 @@ kubectl -n cicd-demo rollout undo deployment/cicd-demo-app
     ], [52, 130]),
 
     ("h1", "8. The 30-second demo, if you get to choose"),
-    ("p", "Open <font face='Courier'>http://20.219.204.192</font> in a browser. In a terminal, "
+    ("p", "Open <font face='Courier'>http://cicd-demo-cia2.centralindia.cloudapp.azure.com</font> in a browser. In a terminal, "
           "delete a pod. Refresh the browser - still up. Show the new pod."),
     ("code", """
 kubectl -n cicd-demo get pods

@@ -1,0 +1,55 @@
+# HorizontalPodAutoscaler - adds and removes pods based on CPU load.
+#
+# This is a SEPARATE object from the Deployment. It cannot be written inside the
+# Deployment YAML; it points at the Deployment through scaleTargetRef and then
+# takes ownership of its replica count.
+#
+# Consequence worth knowing: while this exists, manual scaling does not stick.
+# "kubectl scale --replicas=4" or editing replicas in the portal will be undone
+# within a minute or two, because the HPA recalculates the correct number from
+# CPU and writes it back. That is the autoscaler doing its job, not a fault.
+# To scale by hand instead, delete this object first.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cicd-demo-app
+  namespace: cicd-demo
+  labels:
+    app.kubernetes.io/name: cicd-demo-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cicd-demo-app
+
+  # Never fewer than 2 (so a rolling update stays zero-downtime),
+  # never more than 4 (a 5th pod would not fit on the single B2s node).
+  minReplicas: 2
+  maxReplicas: 4
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Percentage of the CPU *request*, not the limit. The request is 100m,
+          # so this scales up once average usage passes roughly 70m per pod.
+          averageUtilization: 70
+
+  behavior:
+    scaleUp:
+      # React immediately to a load spike.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      # Default is 300s. Shortened so the pods come back down promptly after a
+      # demo; in production a longer window avoids thrashing on spiky traffic.
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

@@ -22,6 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class GreetingApiController {
 
+    private static final String API_KEY = "a8f3k2m9x7q1w5z4p6b0v8n3c2d1e9r7";
+
     private final GreetingService greetingService;
     private final HostResolver hostResolver;
     private final AppProperties appProperties;

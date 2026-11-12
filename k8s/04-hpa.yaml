@@ -34,8 +34,9 @@ spec:
         target:
           type: Utilization
           # Percentage of the CPU *request*, not the limit. The request is 100m,
-          # so this scales up once average usage passes roughly 70m per pod.
-          averageUtilization: 70
+          # so this scales up once average usage passes roughly 40m per pod.
+          # (Lowered from 70 so the scale-up is easy to trigger in a demo.)
+          averageUtilization: 40
 
   behavior:
     scaleUp:

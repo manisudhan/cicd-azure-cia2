@@ -1,0 +1,39 @@
+Azure Container Registry evidence
+Captured 2026-11-20T08:24:23Z immediately before teardown.
+Registry: acrcicdcia2.azurecr.io  (Basic SKU, Central India)
+Repository: cicd-demo-app
+
+One tag per pipeline run: <jenkins-build-number>-<git-commit-sha>
+================================================================
+
+Tag         Created                       Digest
+----------  ----------------------------  -----------------------------------------------------------------------
+latest      2026-11-09T08:22:51.4678554Z  sha256:cf17cf1a97404d37c8c3b7010b990b415809d0d8fa62c61ec813481d35716981
+19-fb32c39  2026-11-12T08:40:19.8984712Z  sha256:cf17cf1a97404d37c8c3b7010b990b415809d0d8fa62c61ec813481d35716981
+18-fb32c39  2026-11-12T07:58:16.5649302Z  sha256:3df94fff00ce0d8886016b3eee364c7cce3ecdeefafcaa2c062e5e5444b5c996
+17-dc89b35  2026-11-12T07:22:21.5862233Z  sha256:5a3956e54ebacea3b89a88d680b86d7ce591159829d05bccf2ba38fb1c4286bf
+16-aa6f42c  2026-11-12T05:12:51.8255485Z  sha256:819e4314b3fc1bab3f1d14193e6c94eb9d44e23c30473ce994c6aa0ffeaa3595
+15-efdaf79  2026-11-12T05:08:05.2754579Z  sha256:f38660e9430d7afc2b8c6628f97f59219c036d3ee0b89cafb5e17aef2065f91b
+14-0e31c0d  2026-11-12T05:04:42.9138792Z  sha256:d5d29820e97c19ee09299c980f4739cc1e416c3c3bc14acac7d01d3b2b3f96e3
+13-3b731b1  2026-11-11T19:26:01.7885982Z  sha256:337b4f8f0a389e31961f26c79d1b15e2e0dc4be0fe83d2b763a16d058e1cde02
+12-de850a0  2026-11-11T19:21:40.7810839Z  sha256:f2aadd8d32a2b7adb3ad91c3cd38cb2b206429a3a98a688ebd13b49f2253d55b
+11-ac268ea  2026-11-09T11:02:59.2779939Z  sha256:453a97d7a36703f8025edae54cdf12217da6d93e072af0826eeee45c21483aa3
+8-95e0d05   2026-11-09T08:22:48.0421254Z  sha256:8dc379cd5eb3b4d846e1bb7ce4e8582b5e016e0b4b65f0d1989e34835722c9c8
+
+Registry storage usage
+======================
+NAME                    LIMIT           CURRENT VALUE    UNIT
+----------------------  --------------  ---------------  ------
+Size                    10737418240     310507182        Bytes
+MaximumStorageCapacity  43980465111040  310507182        Bytes
+Webhooks                2               0                Count
+ScopeMaps               100             0                Count
+Tokens                  100             0                Count
+
+Registry configuration
+======================
+adminUserEnabled: false
+location: centralindia
+loginServer: acrcicdcia2.azurecr.io
+name: acrcicdcia2
+sku: Basic

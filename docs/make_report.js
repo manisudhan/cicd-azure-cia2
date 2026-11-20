@@ -2,8 +2,11 @@ const fs = require("fs");
 const {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   Table, TableRow, TableCell, WidthType, ShadingType, BorderStyle,
-  PageBreak, LevelFormat, convertInchesToTwip,
+  PageBreak, LevelFormat, convertInchesToTwip, ImageRun,
 } = require("docx");
+
+/* Directory holding the screenshots supplied by the student. */
+const IMGDIR = process.argv[3] || ".";
 
 const OUT = process.argv[2] || "report.docx";
 const W = 9026;                      // usable width on A4 with 1" margins (DXA)
@@ -109,6 +112,30 @@ function shot(id, title, how) {
 }
 
 const spacer = (h) => new Paragraph({ spacing: { after: h === undefined ? 160 : h }, children: [] });
+
+/* Embedded screenshot: image centred, then a numbered caption beneath it. */
+function figure(file, w, h, number, caption) {
+  const out = [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 120, after: 60 },
+      children: [new ImageRun({
+        type: "png",
+        data: fs.readFileSync(`${IMGDIR}/${file}`),
+        transformation: { width: w, height: h },
+      })],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 200 },
+      children: [new TextRun({
+        text: `Figure ${number}. ${caption}`,
+        font: BODY, size: 18, italics: true, color: "555555",
+      })],
+    }),
+  ];
+  return out;
+}
 
 /* table from rows; widths are fractions summing to 1 */
 function table(header, rows, fractions) {
@@ -295,8 +322,8 @@ kids.push(
     ],
     [0.4, 0.17, 0.43]),
   spacer(),
-  shot("2", "Jenkins Stage View — all 8 stages green",
-    "Jenkins > job cicd-demo-app > build 16 (or 8, 11, 12, 13 — any build with DEPLOY_TARGET=azure). Avoid builds 2–5, which failed before SonarCloud was configured."),
+  shot("A", "Jenkins Stage View — all 8 stages green",
+    "Start Docker Desktop, run “docker compose up -d”, open http://localhost:8090 and screenshot the Stage View of build 16 (or 8, 11, 12, 13 — any build with DEPLOY_TARGET=azure). The build history survives in the jenkins_home Docker volume. Avoid builds 2–5, which failed before SonarQube Cloud was configured."),
   new Paragraph({ children: [new PageBreak()] }),
 );
 
@@ -347,11 +374,8 @@ kids.push(
   spacer(),
   p("Cost control is part of the design rather than an afterthought: infra/azure-pause.sh stops the cluster between sessions, azure-resume.sh restores it, and azure-teardown.sh deletes the resource group entirely. The node disk was explicitly created at 32 GB rather than accepting the 128 GB Premium SSD default, which would have cost roughly US$20/month for storage the workload never uses and is billed even while the cluster is stopped."),
   spacer(),
-  shot("3", "Azure portal — resource group rg-cicd-cia2",
-    "Portal > Resource groups > rg-cicd-cia2 > Overview, showing the registry and the AKS cluster."),
-  spacer(),
-  shot("4", "Azure portal — AKS cluster overview",
-    "Portal > aks-cicd-cia2 > Overview, showing provisioning status and Kubernetes version."),
+  ...figure("4.png", 600, 306, 1,
+    "Resource group rg-cicd-cia2, showing the container registry alongside the Azure Monitor data-collection rules and Prometheus rule groups created when container monitoring was enabled on the cluster."),
   new Paragraph({ children: [new PageBreak()] }),
 );
 
@@ -376,9 +400,10 @@ kids.push(
       ["Class", "8", "0", "100%"],
     ],
     [0.4, 0.2, 0.2, 0.2]),
+  rp([["The two coverage figures quoted in this report measure different things and are both correct. JaCoCo reports ", {}], ["instruction", { italics: true }], [" coverage of 95.7%, which counts bytecode instructions; SonarQube Cloud reports ", {}], ["line", { italics: true }], [" coverage of 93.1%, which counts source lines. The JaCoCo line figure, 93.3%, is the directly comparable one.", {}]]),
   spacer(),
-  shot("5", "Jenkins test results — 29 tests passing",
-    "Jenkins > build 16 > Test Result, or the test trend graph on the job page."),
+  shot("B", "Jenkins test results — 29 tests passing",
+    "Jenkins > build 16 > Test Result, or the test trend graph on the job page. Recoverable by restarting the local Jenkins container."),
   spacer(),
 
   h2("5.2 Secret scanning"),
@@ -392,8 +417,8 @@ kids.push(
     "  WRN leaks found: 3",
   ]),
   spacer(),
-  shot("6", "Gitleaks stage output",
-    "Jenkins > build 16 > Console Output, search for “gitleaks”. Gitleaks has no dashboard — the build log is the evidence."),
+  shot("C", "Gitleaks stage output",
+    "Jenkins > build 16 > Console Output, search for “gitleaks”. Gitleaks has no dashboard, so the build log is the evidence."),
   spacer(),
 
   h2("5.3 Static analysis"),
@@ -403,8 +428,8 @@ kids.push(
     "        https://sonarcloud.io/dashboard?id=manisudhan_cicd-azure-cia2",
   ]),
   spacer(),
-  shot("7", "SonarCloud dashboard — Quality Gate Passed",
-    "sonarcloud.io > project manisudhan_cicd-azure-cia2. This is still live and needs no cluster."),
+  ...figure("3.png", 600, 317, 2,
+    "SonarQube Cloud project overview. Quality gate Passed with all conditions met, 0 open issues, 0.0% duplication and 93.1% line coverage across 298 lines of code."),
   new Paragraph({ children: [new PageBreak()] }),
 
   h2("5.4 Successful pipeline execution"),
@@ -434,21 +459,20 @@ kids.push(
     "$ az acr repository show-tags --name acrcicdcia2 \\",
     "      --repository cicd-demo-app --orderby time_desc -o table",
     "",
-    "  latest",
-    "  16-aa6f42c",
-    "  15-efdaf79",
-    "  14-0e31c0d",
-    "  13-3b731b1",
-    "  12-de850a0",
-    "  11-ac268ea",
-    "  8-95e0d05",
+    "  latest        19-fb32c39    18-fb32c39    17-dc89b35",
+    "  16-aa6f42c    15-efdaf79    14-0e31c0d    13-3b731b1",
+    "  12-de850a0    11-ac268ea    8-95e0d05",
     "",
-    "Registry storage used: 168,725,567 bytes (161 MiB) for all images,",
-    "because the layers below the application JAR are shared between them.",
+    "11 tags in total. 'latest' and 19-fb32c39 share the digest",
+    "sha256:cf17cf1a9740... - one image under two names, which is why the",
+    "pipeline deploys the build-specific tag and never 'latest'.",
+    "",
+    "Registry storage used: 161 MiB for all images, because the layers",
+    "below the application JAR are shared between them.",
   ]),
   spacer(),
-  shot("8", "ACR repository tags",
-    "Portal > acrcicdcia2 > Repositories > cicd-demo-app."),
+  ...figure("5.png", 600, 314, 3,
+    "Azure Container Registry acrcicdcia2 in the portal: Basic pricing plan, login server acrcicdcia2.azurecr.io, provisioning state Succeeded. The tag listing above was captured from the registry before teardown."),
   spacer(),
 
   h2("5.6 Kubernetes deployment"),
@@ -477,8 +501,8 @@ kids.push(
     "2         Jenkins build 11 from commit ac268ea",
   ]),
   spacer(),
-  shot("9", "kubectl get deployment, pods and service",
-    "Terminal output, or Portal > aks-cicd-cia2 > Kubernetes resources > Workloads with the namespace filter set to cicd-demo."),
+  ...figure("2.png", 600, 242, 4,
+    "AKS Workloads blade listing pods in the Running state with zero restarts. The namespace filter is set to all namespaces, so the Kubernetes system components are shown; the application pods ran in the cicd-demo namespace, as recorded in the kubectl output above."),
   spacer(),
 
   h2("5.7 Application reachable in a browser"),
@@ -496,8 +520,8 @@ kids.push(
     '{"status":"UP","groups":["liveness","readiness"]}',
   ]),
   spacer(),
-  shot("10", "Application running in a browser",
-    "The landing page, showing image tag, Jenkins build number, commit and the pod serving the request."),
+  shot("D", "Application running in a browser",
+    "Requires the cluster. Rebuild with infra/azure-setup.sh and run a pipeline build, then capture the landing page at the public endpoint. The JSON evidence above was captured from the live endpoint."),
   new Paragraph({ children: [new PageBreak()] }),
 
   h2("5.8 Change and redeployment demonstration"),
@@ -510,11 +534,11 @@ kids.push(
   numbered("Stage 8 asserted that the live endpoint reported the new image tag."),
   numbered("The changed message and the incremented build number were visible at the public endpoint."),
   spacer(),
-  shot("11", "Build triggered automatically",
-    "Jenkins build page showing the cause “Started by an SCM change”, or the job’s Git Polling Log."),
+  shot("E", "Build triggered automatically",
+    "Jenkins build page showing the cause “Started by an SCM change”, or the job’s Git Polling Log. Recoverable by restarting the local Jenkins container."),
   spacer(),
-  shot("12", "Before and after at the application endpoint",
-    "Two browser screenshots of the landing page, showing the release message and build number changing."),
+  shot("F", "Before and after at the application endpoint",
+    "Requires the cluster. Optional: the stage 8 assertion in the build log already proves the deployed image tag changed."),
   spacer(),
 
   h2("5.9 Self-healing demonstration"),
@@ -551,8 +575,8 @@ kids.push(
     "  t+240s  cpu=2%    pods=2      returned to the configured minimum",
   ]),
   spacer(),
-  shot("13", "HPA scaling events",
-    "Output of kubectl -n cicd-demo describe hpa cicd-demo-app, showing the SuccessfulRescale events."),
+  shot("G", "Autoscaler scaling events",
+    "Requires the cluster. Optional: the SuccessfulRescale events above were captured from the live autoscaler."),
   new Paragraph({ children: [new PageBreak()] }),
 );
 

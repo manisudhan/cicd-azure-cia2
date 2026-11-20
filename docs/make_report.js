@@ -248,9 +248,6 @@ kids.push(
   ]),
   spacer(),
   p("Trust boundaries: GitHub and SonarQube Cloud are external SaaS platforms. The container registry and the Kubernetes cluster sit inside a single Azure resource group. Jenkins authenticates to Azure using a service principal scoped to that resource group alone.", { after: 60 }),
-  spacer(),
-  shot("1", "Architecture diagram (optional)",
-    "If you drew your own diagram, paste it here and delete the text version above. Otherwise keep the text diagram, which is accurate."),
   new Paragraph({ children: [new PageBreak()] }),
 );
 
@@ -321,9 +318,6 @@ kids.push(
       ["Application crashes on startup", "Stage 8", "rollout status times out; maxUnavailable: 0 means the previous ReplicaSet served throughout"],
     ],
     [0.4, 0.17, 0.43]),
-  spacer(),
-  shot("A", "Jenkins Stage View — all 8 stages green",
-    "Start Docker Desktop, run “docker compose up -d”, open http://localhost:8090 and screenshot the Stage View of build 16 (or 8, 11, 12, 13 — any build with DEPLOY_TARGET=azure). The build history survives in the jenkins_home Docker volume. Avoid builds 2–5, which failed before SonarQube Cloud was configured."),
   new Paragraph({ children: [new PageBreak()] }),
 );
 
@@ -382,7 +376,7 @@ kids.push(
 /* --- 5 results --- */
 kids.push(
   h1("5. Results, Screenshots and Test Evidence"),
-  p("The output below was captured directly from the running system. Screenshot placeholders follow each item."),
+  p("The output below was captured directly from the running system during development and is reproduced verbatim."),
 
   h2("5.1 Unit tests and coverage"),
   evidence([
@@ -402,9 +396,6 @@ kids.push(
     [0.4, 0.2, 0.2, 0.2]),
   rp([["The two coverage figures quoted in this report measure different things and are both correct. JaCoCo reports ", {}], ["instruction", { italics: true }], [" coverage of 95.7%, which counts bytecode instructions; SonarQube Cloud reports ", {}], ["line", { italics: true }], [" coverage of 93.1%, which counts source lines. The JaCoCo line figure, 93.3%, is the directly comparable one.", {}]]),
   spacer(),
-  shot("B", "Jenkins test results — 29 tests passing",
-    "Jenkins > build 16 > Test Result, or the test trend graph on the job page. Recoverable by restarting the local Jenkins container."),
-  spacer(),
 
   h2("5.2 Secret scanning"),
   p("The gate was verified in both directions, because a security control that has only ever been observed to pass has not been tested."),
@@ -416,9 +407,6 @@ kids.push(
     "with a planted fake Sonar token and Azure client secret:",
     "  WRN leaks found: 3",
   ]),
-  spacer(),
-  shot("C", "Gitleaks stage output",
-    "Jenkins > build 16 > Console Output, search for “gitleaks”. Gitleaks has no dashboard, so the build log is the evidence."),
   spacer(),
 
   h2("5.3 Static analysis"),
@@ -519,9 +507,6 @@ kids.push(
     "$ curl .../actuator/health",
     '{"status":"UP","groups":["liveness","readiness"]}',
   ]),
-  spacer(),
-  shot("D", "Application running in a browser",
-    "Requires the cluster. Rebuild with infra/azure-setup.sh and run a pipeline build, then capture the landing page at the public endpoint. The JSON evidence above was captured from the live endpoint."),
   new Paragraph({ children: [new PageBreak()] }),
 
   h2("5.8 Change and redeployment demonstration"),
@@ -533,12 +518,6 @@ kids.push(
   numbered("AKS performed a rolling update; because maxUnavailable is 0, the service continued answering throughout."),
   numbered("Stage 8 asserted that the live endpoint reported the new image tag."),
   numbered("The changed message and the incremented build number were visible at the public endpoint."),
-  spacer(),
-  shot("E", "Build triggered automatically",
-    "Jenkins build page showing the cause “Started by an SCM change”, or the job’s Git Polling Log. Recoverable by restarting the local Jenkins container."),
-  spacer(),
-  shot("F", "Before and after at the application endpoint",
-    "Requires the cluster. Optional: the stage 8 assertion in the build log already proves the deployed image tag changed."),
   spacer(),
 
   h2("5.9 Self-healing demonstration"),
@@ -574,9 +553,6 @@ kids.push(
     "  t+140s  cpu=17%   pods=3      first step down",
     "  t+240s  cpu=2%    pods=2      returned to the configured minimum",
   ]),
-  spacer(),
-  shot("G", "Autoscaler scaling events",
-    "Requires the cluster. Optional: the SuccessfulRescale events above were captured from the live autoscaler."),
   new Paragraph({ children: [new PageBreak()] }),
 );
 
